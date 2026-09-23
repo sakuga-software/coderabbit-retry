@@ -90,7 +90,14 @@ export async function postCommand(pr: PullRequest, command: Command): Promise<st
   return url.trim();
 }
 
-export function openInBrowser(url: string): void {
+export function openInBrowser(url: string): Promise<void> {
   const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
-  spawn(opener, [url], { stdio: "ignore", detached: true }).unref();
+  return new Promise((resolve, reject) => {
+    const child = spawn(opener, [url], { stdio: "ignore", detached: true });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
 }

@@ -304,8 +304,10 @@ export function App(props: AppProps) {
       return;
     }
     if (!action.command) {
-      gitHub.openInBrowser(row.pr.url);
-      setFlash({ text: `Opened ${key} in the browser.`, color: "green" });
+      gitHub.openInBrowser(row.pr.url).then(
+        () => setFlash({ text: `Opened ${key} in the browser.`, color: "green" }),
+        (error) => setFlash({ text: `Could not open ${key}: ${message(error)}`, color: "red" }),
+      );
       return;
     }
     const quota =
@@ -323,6 +325,12 @@ export function App(props: AppProps) {
     const row = rowsRef.current.get(pending.key);
     if (!yes || !row) {
       setFlash({ text: "Cancelled.", color: "gray" });
+      return;
+    }
+    // A list refresh can close the pull request while the prompt waits.
+    const refused = refusal(pending.action, { left: row.left !== undefined, dryRun: options.dryRun });
+    if (refused) {
+      setFlash({ text: `Cannot ${pending.action.label} ${pending.key}: ${refused}.`, color: "yellow" });
       return;
     }
     setFlash({ text: `Posting "${commandBody(pending.action.command)}" on ${pending.key}…`, color: "blue" });

@@ -93,6 +93,8 @@ const app = render(<App options={{ ...cli.flags, since, interactive }} />, { alt
 process.once("SIGTERM", () => app.unmount());
 try {
   await app.waitUntilExit();
-} catch {
+} catch (error) {
   process.exitCode = 1;
+  // The alternate screen drops its last frame on exit, and the error with it.
+  if (interactive) console.error(`✖ ${error instanceof Error ? error.message : String(error)}`);
 }

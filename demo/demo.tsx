@@ -100,7 +100,7 @@ const fakeGitHub: GitHub = {
     if (command === "review") requestedAt = elapsed();
     return `${target.url}#issuecomment-${1234567890 + target.number}`;
   },
-  openInBrowser() {},
+  async openInBrowser() {},
 };
 
 const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
