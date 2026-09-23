@@ -308,14 +308,14 @@ export function App(props: AppProps) {
   const shownRows = hideLeft ? (rows ?? []).filter((row) => !row.left) : (rows ?? []);
   const keys = shownRows.map((row) => keyOf(row.pr));
   const selection = reselect(allKeys, keys, selected);
+  // Hiding a row, by h or by a refresh that closes it, moves the selection. Keep the move after the rows show again.
+  useEffect(() => {
+    if (selected !== selection) setSelected(selection);
+  }, [selected, selection]);
   const hiddenCount = allKeys.length - keys.length;
 
   function toggleHidden() {
     const inactive = (rows ?? []).filter((row) => row.left).length;
-    if (!hideLeft) {
-      const activeKeys = (rows ?? []).filter((row) => !row.left).map((row) => keyOf(row.pr));
-      setSelected(reselect(allKeys, activeKeys, selection));
-    }
     setHideLeft(!hideLeft);
     setFlash(
       hideLeft
