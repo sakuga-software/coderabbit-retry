@@ -120,8 +120,9 @@ export function App(props: AppProps) {
   const [confirmation, setConfirmation] = useState<Confirmation>();
   const [flash, setFlash] = useState<{ text: string; color: string }>();
   const [hideLeft, setHideLeft] = useState(false);
-  // Two keys in one input chunk share one render. The ref gives the second key the state that the first one set.
   const hideLeftRef = useRef(false);
+  const selectedRef = useRef<string>(undefined);
+  const confirmationRef = useRef<Confirmation>(undefined);
   const rowsRef = useRef(new Map<string, Row>());
   const controls = useRef<PostControls>(null);
   const rowNodes = useRef(new Map<string, DOMElement>());
@@ -249,7 +250,8 @@ export function App(props: AppProps) {
       const added = plan.added.map((key) => listed.get(key)!);
       for (const pr of added) rowsRef.current.set(keyOf(pr), { pr, activity: "loading" });
       setRows([...rowsRef.current.values()]);
-      setSelected((current) => current ?? [...rowsRef.current.keys()][0]);
+      selectedRef.current ??= [...rowsRef.current.keys()][0];
+      setSelected(selectedRef.current);
       await Promise.all([...added, ...plan.recheck.map((key) => rowsRef.current.get(key)!.pr)].map(refresh));
     }
 
@@ -310,25 +312,47 @@ export function App(props: AppProps) {
   const shownRows = hideLeft ? (rows ?? []).filter((row) => !row.left) : (rows ?? []);
   const keys = shownRows.map((row) => keyOf(row.pr));
   const selection = reselect(allKeys, keys, selected);
-  // Hiding a row, by h or by a refresh that closes it, moves the selection. Keep the move after the rows show again.
-  // A key press can change the selection before this effect runs. Keep that newer value.
-  useEffect(() => {
-    if (selected !== selection) setSelected((current) => (current === selected ? selection : current));
-  }, [selected, selection]);
   const hiddenCount = allKeys.length - keys.length;
 
+  // Several keys can arrive in one input chunk and run with the closure of one render.
+  // The handlers below read and write these refs, so each key sees what the previous key did.
+  function live() {
+    const all = [...rowsRef.current.values()];
+    const everyKey = all.map((row) => keyOf(row.pr));
+    const shownKeys = all.filter((row) => !hideLeftRef.current || !row.left).map((row) => keyOf(row.pr));
+    return { shownKeys, key: reselect(everyKey, shownKeys, selectedRef.current) };
+  }
+
+  function select(key: string | undefined) {
+    selectedRef.current = key;
+    setSelected(key);
+  }
+
+  function confirm(next: Confirmation | undefined) {
+    confirmationRef.current = next;
+    setConfirmation(next);
+  }
+
+  // Hiding a row, by h or by a refresh that closes it, moves the selection. Keep the move after the rows show again.
+  useEffect(() => {
+    const { key } = live();
+    if (key !== selectedRef.current) select(key);
+  }, [rows, hideLeft]);
+
   function toggleHidden() {
-    const inactive = (rows ?? []).filter((row) => row.left).length;
-    hideLeftRef.current = !hideLeft;
-    setHideLeft(!hideLeft);
+    const inactive = [...rowsRef.current.values()].filter((row) => row.left).length;
+    const hide = !hideLeftRef.current;
+    hideLeftRef.current = hide;
+    setHideLeft(hide);
+    select(live().key);
     setFlash(
-      hideLeft
-        ? { text: "Showing all the pull requests.", color: "gray" }
-        : { text: `Hiding ${inactive} merged, closed or draft pull request${inactive === 1 ? "" : "s"}.`, color: "gray" },
+      hide
+        ? { text: `Hiding ${inactive} merged, closed or draft pull request${inactive === 1 ? "" : "s"}.`, color: "gray" }
+        : { text: "Showing all the pull requests.", color: "gray" },
     );
   }
 
-  function request(action: Action, key = selection) {
+  function request(action: Action, key = live().key) {
     const row = key ? rowsRef.current.get(key) : undefined;
     if (!row || !key) return;
     const refused = refusal(action, { left: row.left !== undefined, dryRun: options.dryRun });
@@ -348,12 +372,12 @@ export function App(props: AppProps) {
         ? `The quota comes back at ${formatTime(row.decision.availableAt)}: CodeRabbit will likely refuse.`
         : undefined;
     setFlash(undefined);
-    setConfirmation({ key, action, warning: quota });
+    confirm({ key, action, warning: quota });
   }
 
   function answer(yes: boolean) {
-    const pending = confirmation;
-    setConfirmation(undefined);
+    const pending = confirmationRef.current;
+    confirm(undefined);
     if (!pending?.action.command) return;
     const row = rowsRef.current.get(pending.key);
     if (!yes || !row) {
@@ -372,39 +396,49 @@ export function App(props: AppProps) {
 
   function press(id: string) {
     if (id === "yes" || id === "no") return answer(id === "yes");
-    if (confirmation) return;
+    if (confirmationRef.current) return;
     if (id === "h") return toggleHidden();
     const action = actionForKey(id);
     if (action) request(action);
   }
 
-  const move = (step: number) =>
-    setSelected((previous) => {
-      const all = [...rowsRef.current.values()];
-      const everyKey = all.map((row) => keyOf(row.pr));
-      const shownKeys = all.filter((row) => !hideLeftRef.current || !row.left).map((row) => keyOf(row.pr));
-      return moveSelection(shownKeys, reselect(everyKey, shownKeys, previous), step);
-    });
+  function move(step: number) {
+    const { shownKeys, key } = live();
+    select(moveSelection(shownKeys, key, step));
+  }
+
+  function typeKey(char: string) {
+    if (confirmationRef.current) {
+      if (char === "y" || char === "\r") answer(true);
+      else if (char === "n" || char === "\u001B") answer(false);
+      return;
+    }
+    if (char === "k") move(-1);
+    else if (char === "j") move(1);
+    else if (char === "\r") press("o");
+    else if (char === "q") exit();
+    else press(char);
+  }
 
   useInput(
     (input, key) => {
       if (isMouseFragment(input)) return;
-      if (confirmation) {
-        if (input === "y" || key.return) answer(true);
-        else if (input === "n" || key.escape) answer(false);
-        return;
+      if (key.upArrow) return confirmationRef.current ? undefined : move(-1);
+      if (key.downArrow) return confirmationRef.current ? undefined : move(1);
+      if (key.return) return typeKey("\r");
+      if (key.escape) return typeKey("\u001B");
+      // A paste must not answer a prompt that it opened itself: the rest of the chunk stops there.
+      const hadPrompt = confirmationRef.current !== undefined;
+      for (const char of input) {
+        typeKey(char);
+        if (!hadPrompt && confirmationRef.current) break;
       }
-      if (key.upArrow || input === "k") move(-1);
-      else if (key.downArrow || input === "j") move(1);
-      else if (key.return) press("o");
-      else if (input === "q") exit();
-      else if (input.length === 1) press(input);
     },
     { isActive: options.interactive },
   );
 
-  const handlers = useRef({ press, move, select: setSelected });
-  handlers.current = { press, move, select: setSelected };
+  const handlers = useRef({ press, move, select });
+  handlers.current = { press, move, select };
 
   useEffect(() => {
     if (!options.interactive) return;
