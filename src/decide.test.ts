@@ -117,3 +117,55 @@ test("a finished full review after the rate limit lifts it", () => {
   ]);
   assert.deepEqual(decision, { kind: "idle", limitLifted: true });
 });
+
+const HEAD = "abc";
+const coverage = (commit: string, kind = "reviewed") =>
+  `<!-- final_review_risk_coverage:{"sourceCommitId":"${commit}","coveredCommitId":"${commit}","kind":"${kind}"} -->`;
+const summary = (body: string, updatedAgo = 60) => bot(`<!-- This is an auto-generated comment: summarize by coderabbit.ai --> ${body}`, 9000, updatedAgo);
+
+test("a finished review of the head in the summary counts, with no GitHub review", () => {
+  assert.equal(run([summary(coverage(HEAD))]).kind, "reviewed");
+});
+
+test("a finished review of an older commit does not count", () => {
+  assert.equal(run([summary(coverage("old"))]).kind, "idle");
+});
+
+test("a review in progress wins over the coverage of the head", () => {
+  assert.equal(run([summary(`<!-- This is an auto-generated comment: review in progress by coderabbit.ai --> ${coverage(HEAD)}`)]).kind, "busy");
+});
+
+test("a coverage of another kind does not count", () => {
+  assert.equal(run([summary(coverage(HEAD, "partial"))]).kind, "idle");
+});
+
+test("a skipped review gives its reason", () => {
+  const body = "<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n> [!IMPORTANT]\n> ## Review skipped\n> \n> Bot user detected.\n> \n> To trigger a single review, invoke the `@coderabbitai review` command.";
+  assert.deepEqual(run([summary(body)]), { kind: "skipped", reason: "Bot user detected" });
+});
+
+test("paused reviews on an unreviewed head give paused", () => {
+  assert.equal(run([summary("<!-- This is an auto-generated comment: review paused by coderabbit.ai -->")]).kind, "paused");
+});
+
+test("paused reviews on a reviewed head give reviewed", () => {
+  assert.equal(run([summary(`<!-- This is an auto-generated comment: review paused by coderabbit.ai --> ${coverage(HEAD)}`)]).kind, "reviewed");
+});
+
+test("a rate limit wins over a pause", () => {
+  assert.equal(run([summary("<!-- review paused by coderabbit.ai --> <!-- rate limited by coderabbit.ai --> available in 26 minutes.", 60)]).kind, "wait");
+});
+
+test("no CodeRabbit comment and no review give unseen", () => {
+  assert.equal(run([me("hello", 60)]).kind, "unseen");
+});
+
+test("a skip notice with its own title gives the title", () => {
+  const body = "<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n\n> [!IMPORTANT]\n> ## Draft PR not reviewed\n> \n> Draft PRs are not automatically reviewed by default.";
+  assert.deepEqual(run([summary(body)]), { kind: "skipped", reason: "Draft PR not reviewed" });
+});
+
+test("the skip reason ignores the headings before the notice", () => {
+  const body = "## Walkthrough\n\nSome text.\n<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n> ## Review skipped\n> \n> Bot user detected.";
+  assert.deepEqual(run([summary(body)]), { kind: "skipped", reason: "Bot user detected" });
+});

@@ -121,6 +121,7 @@ export function App(props: AppProps) {
   const [flash, setFlash] = useState<{ text: string; color: string }>();
   const [hideLeft, setHideLeft] = useState(false);
   const hideLeftRef = useRef(false);
+  const pendingEscape = useRef<NodeJS.Timeout>(undefined);
   const selectedRef = useRef<string>(undefined);
   const confirmationRef = useRef<Confirmation>(undefined);
   const rowsRef = useRef(new Map<string, Row>());
@@ -276,6 +277,9 @@ export function App(props: AppProps) {
           } catch (error) {
             setListError(message(error));
           }
+          // A settled row can change by itself: a first review starts or ends, or a push lands.
+          const settled = tracked().filter((pr) => !rowOf(pr).left && !needsWatch(rowOf(pr), options.dryRun));
+          await Promise.all(settled.map(refresh));
         }
 
         const due = watched.filter((pr) => {
@@ -426,7 +430,13 @@ export function App(props: AppProps) {
       if (key.upArrow) return confirmationRef.current ? undefined : move(-1);
       if (key.downArrow) return confirmationRef.current ? undefined : move(1);
       if (key.return) return typeKey("\r");
-      if (key.escape) return typeKey("\u001B");
+      // A terminal can split a mouse report after its Escape byte, and Ink then reports a lone Escape.
+      // Wait a moment: if the rest of a mouse report follows, the Escape was part of it.
+      if (key.escape) {
+        clearTimeout(pendingEscape.current);
+        pendingEscape.current = setTimeout(() => typeKey("\u001B"), 60);
+        return;
+      }
       // A paste must answer at most one prompt, and never a prompt that it opened itself.
       // The rest of the chunk stops when a key opens or closes a prompt.
       for (const char of input) {
@@ -437,6 +447,12 @@ export function App(props: AppProps) {
     },
     { isActive: options.interactive },
   );
+
+  useEffect(() => {
+    if (!flash) return;
+    const timer = setTimeout(() => setFlash(undefined), 5_000);
+    return () => clearTimeout(timer);
+  }, [flash]);
 
   const handlers = useRef({ press, move, select });
   handlers.current = { press, move, select };
@@ -453,7 +469,11 @@ export function App(props: AppProps) {
       const row = hitTest(rowNodes.current, event.x, event.y);
       if (row) handlers.current.select(row);
     });
-    const onData = (data: Buffer | string) => feed(data.toString());
+    const onData = (data: Buffer | string) => {
+      const text = data.toString();
+      if (text.startsWith("[<")) clearTimeout(pendingEscape.current);
+      feed(text);
+    };
     stdin.on("data", onData);
     return () => {
       stdin.off("data", onData);
@@ -615,6 +635,27 @@ function describe(row: Row, now: Date, options: Options): View {
           ? "rate limit lifted, but the last commit has no review"
           : "no rate limit, but the last commit has no review",
       };
+    case "skipped":
+      return {
+        icon: <Text color="gray">⊘</Text>,
+        label: "skipped",
+        color: "gray",
+        detail: `CodeRabbit skipped the review: ${decision.reason}${options.interactive ? " · r requests one" : ""}`,
+      };
+    case "paused":
+      return {
+        icon: <Text color="gray">‖</Text>,
+        label: "paused",
+        color: "gray",
+        detail: `automatic reviews are paused, and the last commit has no review${options.interactive ? " · r reviews it once" : ""}`,
+      };
+    case "unseen":
+      return {
+        icon: <Text color="gray">?</Text>,
+        label: "no review yet",
+        color: "gray",
+        detail: "CodeRabbit has not commented on this pull request",
+      };
     case "wait": {
       const remaining = decision.availableAt.getTime() - now.getTime();
       const guess = decision.delayGuessed ? " · unreadable delay, 1 h assumed" : "";
@@ -720,6 +761,9 @@ function Footer({ rows, triggered, done, now, nextCheckAt, listError, options }:
     count("busy") > 0 && `${count("busy")} reviewing`,
     count("reviewed") > 0 && `${count("reviewed")} up to date`,
     count("idle") > 0 && `${count("idle")} with nothing to do`,
+    count("skipped") > 0 && `${count("skipped")} skipped`,
+    count("paused") > 0 && `${count("paused")} paused`,
+    count("unseen") > 0 && `${count("unseen")} with no review yet`,
     countLeft("merged") > 0 && `${countLeft("merged")} merged`,
     countLeft("closed") > 0 && `${countLeft("closed")} closed`,
     countLeft("draft") > 0 && `${countLeft("draft")} back to draft`,
