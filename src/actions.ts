@@ -38,3 +38,16 @@ export function moveSelection(keys: string[], selected: string | undefined, step
   if (index === -1) return keys[0];
   return keys[Math.min(keys.length - 1, Math.max(0, index + step))];
 }
+
+/**
+ * Keeps the selection on a visible row. If the selected row is hidden, the selection goes to
+ * the next visible row in the full list, or to the previous one at the end of the list.
+ */
+export function reselect(allKeys: string[], visibleKeys: string[], selected: string | undefined): string | undefined {
+  if (visibleKeys.length === 0) return undefined;
+  if (selected !== undefined && visibleKeys.includes(selected)) return selected;
+  const visible = new Set(visibleKeys);
+  const index = selected === undefined ? -1 : allKeys.indexOf(selected);
+  if (index === -1) return visibleKeys[0];
+  return allKeys.slice(index + 1).find((key) => visible.has(key)) ?? allKeys.slice(0, index).findLast((key) => visible.has(key));
+}
