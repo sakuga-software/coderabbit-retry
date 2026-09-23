@@ -31,6 +31,13 @@ coderabbit-retry --help          # options and states
 
 ## Decision rules
 
+- A commit counts as reviewed if CodeRabbit submitted a GitHub review on it, or if its summary
+  says that a finished review covered it (`final_review_risk_coverage`). An incremental review
+  with no new finding often submits no GitHub review.
+- A summary that says "Review skipped" (a bot author, a draft) gives the state `skipped`
+  with the reason. "Reviews paused" gives `paused`. The tool retries neither by itself:
+  CodeRabbit chose not to review. Press `r` to ask once.
+- A pull request with no CodeRabbit comment and no review gives `no review yet`.
 - The delay comes from the **current version** of the CodeRabbit comment.
   Its "available in …" starts at the last edit of the comment (`updated_at`).
 - Only a **bare** `@coderabbitai review` comment counts as a request.
@@ -43,6 +50,9 @@ coderabbit-retry --help          # options and states
 - With `--watch`, the tool searches the pull requests again once a minute. It adds the new
   ones, and shows the ones that are merged, closed or back to draft. It never posts on those.
   A draft that is ready for review again comes back into the watch.
+- With `--watch`, the settled rows (up to date, nothing to do, skipped, paused, no review yet)
+  are checked again at each list refresh. A first review then shows up when it starts and when
+  it ends, and a push that CodeRabbit has not reviewed yet shows up too.
 
 ## Keys and mouse
 

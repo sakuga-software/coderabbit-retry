@@ -22,12 +22,16 @@ const cli = meow(
         --version             Show the version
 
   States
-    up to date     CodeRabbit already reviewed the last commit
+    up to date     CodeRabbit already reviewed the last commit, with a GitHub review
+                   or with a finished review of it in its summary
     reviewing      the CodeRabbit summary shows a review in progress
     quota          the quota is not back; shows when it comes back
     requested      a bare "@coderabbitai review" of less than 15 min waits for a reply
     nothing to do  the last commit has no review, but no rate limit is active
     to retry       the quota is back: posts a bare "@coderabbitai review"
+    skipped        CodeRabbit skipped the review (a bot author, a draft…); r requests one
+    paused         automatic reviews are paused and the last commit has no review
+    no review yet  CodeRabbit has not commented on the pull request
     merged         the pull request is merged; the tool no longer watches it
     closed         the pull request is closed; the tool no longer watches it
     draft          the pull request is back to draft; watched again if it is ready
@@ -38,7 +42,9 @@ const cli = meow(
   the previous one.
 
   With --watch, the tool searches the pull requests again once a minute. It
-  adds the new ones and shows the ones that are merged, closed or back to draft.
+  adds the new ones, shows the ones that are merged, closed or back to draft,
+  and checks the settled ones again, so a first review shows up when it starts
+  and when it ends.
 
   Keys and mouse
     With --watch in a terminal, the list takes keys and mouse clicks:
