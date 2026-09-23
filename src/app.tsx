@@ -113,7 +113,7 @@ export function App(props: AppProps) {
       const deadline = Date.now() + timing.replyTimeoutMs;
       let decision: Decision | undefined;
       do {
-        await sleep(timing.replyPollMs, undefined, { signal });
+        await sleep(Math.min(timing.replyPollMs, Math.max(0, deadline - Date.now())), undefined, { signal });
         decision = await refresh(pr);
       } while (decision?.kind === "pending" && Date.now() < deadline);
       return decision;
