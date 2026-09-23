@@ -68,9 +68,9 @@ const cli = meow(
     s               post "@coderabbitai resolve": resolve the threads
     h               hide or show the merged, closed and draft pull requests
     q               quit
-  Each post asks for a confirmation: y or Enter posts, n or Esc cancels. A click selects a row or presses
-  a button. The mouse mode takes over text selection: hold Shift or Option,
-  depending on the terminal, to select text.
+  Each post asks for a confirmation: y or Enter posts, n or Esc cancels. A
+  click selects a row or presses a button. The mouse mode takes over text
+  selection: hold Shift or Option, depending on the terminal, to select text.
 
   Examples
     $ coderabbit-retry

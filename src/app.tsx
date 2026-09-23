@@ -144,8 +144,8 @@ export function App(props: AppProps) {
     };
     const rowOf = (pr: PullRequest) => rowsRef.current.get(keyOf(pr))!;
 
-    // The CodeRabbit quota is shared by the whole org. Posts go one at a time, and each one
-    // waits for the reply before the next: a new rate limit blocks all the other PRs too.
+    // The CodeRabbit quota belongs to the developer. Posts go one at a time, and each one waits for
+    // the reply before the next: a new rate limit blocks the other pull requests of the developer too.
     function exclusive(task: () => Promise<void>): Promise<void> {
       const run = postLock.then(() => {
         signal.throwIfAborted();
