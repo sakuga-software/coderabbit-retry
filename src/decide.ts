@@ -7,6 +7,7 @@ const REQUEST_TIMEOUT_MS = 15 * 60_000;
 const QUOTA_MARGIN_MS = 30_000;
 
 export interface Comment {
+  id?: number;
   user: { login: string } | null;
   body: string;
   created_at: string;
@@ -154,9 +155,26 @@ export function quotaSignals(pr: string, comments: Comment[], reviews: Review[])
  * "Plan:" line of the last CodeRabbit comment or review that has one.
  */
 export function quotaScope(repo: string, comments: Comment[], reviews: Review[]): string {
-  const bodies = [...comments.filter(isBot), ...reviews.filter(isBot)].map((item) => item.body ?? "");
-  const plan = bodies.map((body) => /\*\*Plan\*\*:\s*([^\n*]+)/.exec(body)?.[1]?.trim()).findLast(Boolean);
+  const dated = [
+    ...comments.filter(isBot).map((comment) => ({ at: time(comment.updated_at), body: comment.body })),
+    ...reviews.filter(isBot).map((review) => ({ at: time(review.submitted_at), body: review.body ?? "" })),
+  ].toSorted((a, b) => a.at - b.at);
+  const plan = dated.map(({ body }) => /\*\*Plan\*\*:\s*([^\n*]+)/.exec(body)?.[1]?.trim()).findLast(Boolean);
   return plan && /^open source$/i.test(plan) ? repo : "developer";
+}
+
+/**
+ * Tells if CodeRabbit added or edited a comment between two reads of the same pull request.
+ * It compares the comments, not their times: GitHub gives seconds, so a reply in the same second
+ * as a request can carry an earlier timestamp.
+ */
+export function botReplied(before: Comment[], after: Comment[]): boolean {
+  const keyOf = (comment: Comment) => String(comment.id ?? comment.created_at);
+  const known = new Map(before.filter(isBot).map((comment) => [keyOf(comment), comment]));
+  return after.filter(isBot).some((comment) => {
+    const old = known.get(keyOf(comment));
+    return !old || old.updated_at !== comment.updated_at || old.body !== comment.body;
+  });
 }
 
 type QuotaEstimate =

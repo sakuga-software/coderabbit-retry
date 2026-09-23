@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { BOT_LOGIN, decide, parseDelay, quotaScope, quotaSignals, type Comment, type QuotaSignal, type Review } from "./decide.js";
+import { BOT_LOGIN, botReplied, decide, parseDelay, quotaScope, quotaSignals, type Comment, type QuotaSignal, type Review } from "./decide.js";
 
 const now = new Date("2026-09-23T09:00:00Z");
 const ago = (seconds: number) => new Date(now.getTime() - seconds * 1000).toISOString();
@@ -312,4 +312,20 @@ test("a paid plan, or no plan line, shares the quota across the repositories of 
 test("the plan line of a review body counts too", () => {
   const review: Review = { ...botReview("APPROVED"), body: "**Plan**: Open source" };
   assert.equal(quotaScope("acme/lib", [], [review]), "acme/lib");
+});
+
+test("the newest plan line wins, comments and reviews together", () => {
+  const olderReview: Review = { ...botReview("APPROVED", "x", 900), body: "**Plan**: Open source" };
+  const newerComment = bot("<!-- summarize by coderabbit.ai -->\n> **Plan**: Advanced\n", 9000, 60);
+  assert.equal(quotaScope("acme/lib", [newerComment], [olderReview]), "developer");
+  const newerReview: Review = { ...botReview("APPROVED", "x", 30), body: "**Plan**: Open source" };
+  assert.equal(quotaScope("acme/lib", [newerComment], [newerReview]), "acme/lib");
+});
+
+test("botReplied sees a new or edited CodeRabbit comment, whatever the timestamp precision", () => {
+  const before = [{ ...bot("summary", 9000, 60), id: 1 }];
+  assert.equal(botReplied(before, before), false);
+  assert.equal(botReplied(before, [...before, { ...me("@coderabbitai review", 0), id: 2 }]), false);
+  assert.equal(botReplied(before, [...before, { ...bot("Review rate limited.", 0), id: 3 }]), true);
+  assert.equal(botReplied(before, [{ ...bot("summary edited", 9000, 60), id: 1 }]), true);
 });

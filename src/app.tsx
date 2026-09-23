@@ -3,7 +3,7 @@ import Spinner from "ink-spinner";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ACTIONS, actionForKey, commandBody, moveSelection, refusal, reselect, type Action, type Command } from "./actions.js";
-import { BOT_LOGIN, decide, quotaScope, quotaSignals, type Comment, type Decision, type QuotaSignal, type QuotaSource, type Review, type Verdict } from "./decide.js";
+import { botReplied, decide, quotaScope, quotaSignals, type Comment, type Decision, type QuotaSignal, type QuotaSource, type Review, type Verdict } from "./decide.js";
 import * as github from "./github.js";
 import type { PullRequest } from "./github.js";
 import { createMouseParser, DISABLE_MOUSE, ENABLE_MOUSE, isMouseFragment } from "./mouse.js";
@@ -134,7 +134,7 @@ export function App(props: AppProps) {
   useEffect(() => {
     const abort = new AbortController();
     const { signal } = abort;
-    const lastPostedAt = new Map<string, number>();
+    const lastPosts = new Map<string, { at: number; before: Comment[] }>();
     let postLock = Promise.resolve();
 
     const update = (pr: PullRequest, patch: Partial<Row>) => {
@@ -203,10 +203,11 @@ export function App(props: AppProps) {
     }
 
     async function post(pr: PullRequest, command: Command): Promise<boolean> {
+      const commentsBefore = rowOf(pr).fetched?.comments ?? [];
       update(pr, { activity: { posting: command } });
       try {
         const url = await gitHub.postCommand(pr, command);
-        if (REVIEW_COMMANDS.includes(command)) lastPostedAt.set(keyOf(pr), Date.now());
+        if (REVIEW_COMMANDS.includes(command)) lastPosts.set(keyOf(pr), { at: Date.now(), before: commentsBefore });
         update(pr, { activity: undefined, posted: { command, url } });
       } catch (error) {
         update(pr, { activity: undefined, error: message(error) });
@@ -238,9 +239,9 @@ export function App(props: AppProps) {
 
     // A request of this session with no reply from CodeRabbit yet blocks a new one on the same pull request.
     // A reply, such as a refusal, ends the block: a later signal can then free the quota again.
-    function unanswered(row: Row, postedAt: number | undefined): boolean {
-      if (postedAt === undefined || Date.now() - postedAt >= REPOST_GUARD_MS) return false;
-      return !row.fetched?.comments.some((comment) => comment.user?.login === BOT_LOGIN && Date.parse(comment.updated_at) > postedAt);
+    function unanswered(row: Row, last: { at: number; before: Comment[] } | undefined): boolean {
+      if (!last || Date.now() - last.at >= REPOST_GUARD_MS) return false;
+      return !botReplied(last.before, row.fetched?.comments ?? []);
     }
 
     async function triggerReady(prs: PullRequest[]) {
@@ -248,8 +249,9 @@ export function App(props: AppProps) {
       for (const pr of prs) {
         await exclusive(async () => {
           const row = rowOf(pr);
-          if (row.left || row.decision?.kind !== "trigger") return;
-          if (unanswered(row, lastPostedAt.get(keyOf(pr)))) return;
+          // A row whose last fetch failed shows old data: its head and its status are not checked.
+          if (row.left || row.error || row.decision?.kind !== "trigger") return;
+          if (unanswered(row, lastPosts.get(keyOf(pr)))) return;
           if (await post(pr, "review")) setTriggered((count) => count + 1);
         });
       }
