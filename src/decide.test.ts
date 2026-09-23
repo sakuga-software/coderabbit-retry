@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { BOT_LOGIN, decide, parseDelay, type Comment, type Review } from "./decide.js";
+import { BOT_LOGIN, decide, parseDelay, quotaSignals, type Comment, type QuotaSignal, type Review } from "./decide.js";
 
 const now = new Date("2026-09-23T09:00:00Z");
 const ago = (seconds: number) => new Date(now.getTime() - seconds * 1000).toISOString();
@@ -195,4 +195,65 @@ test("a head covered by the summary keeps the verdict of an older review", () =>
 test("only comment reviews give commented, and a dismissed review clears the verdict", () => {
   assert.deepEqual(run([], [botReview("COMMENTED")]), { kind: "reviewed", verdict: "commented" });
   assert.deepEqual(run([], [botReview("CHANGES_REQUESTED", HEAD, 600), botReview("DISMISSED", HEAD, 300)]), { kind: "reviewed", verdict: "commented" });
+});
+
+// Verbatim CodeRabbit texts, copied from sakuga-software pull requests on 2026-09-23.
+const REFUSED_REPLY =
+  "<!-- This is an auto-generated reply by CodeRabbit -->\n<!-- CodeRabbit review command invocation: v2:1fb9257b -->\n<details>\n<summary>⚠️ Action not completed</summary>\n\nReview rate limited.\n\n> Note: CodeRabbit is an incremental review system and does not re-review already reviewed commits. This command is applicable only when automatic reviews are paused.\n\n</details>";
+const LIMIT_SUMMARY =
+  "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\n<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->\n\n> [!WARNING]\n> ## Review limit reached\n> \n> **Next included review available in 34 seconds.**\n> \n> **Limit details:** You’ve used all 10 included reviews currently available. Your 27 included PR review attempts over the past 7 days set your current allowance at 10 reviews per hour.\n> \n> Enable **[usage-based reviews](https://app.coderabbit.ai/settings/billing)** in Billing to review now. Otherwise, wait until the next included review is available.";
+const FREE_SUMMARY = (remaining: number) =>
+  `<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\n<!-- final_review_risk_coverage:{"sourceCommitId":"x","coveredCommitId":"x","kind":"reviewed"} -->\n**Included review availability:** Your plan provides up to 10 included reviews per hour; ${remaining} ${remaining === 1 ? "remains" : "remain"} after this review.`;
+
+const decideWith = (comments: Comment[], quota?: QuotaSignal[]) =>
+  decide({ head: HEAD, reviews: [], comments, now, pr: "acme/web#1", quota });
+
+test("a refused command with no delay keeps the delay of the summary", () => {
+  const decision = decideWith([bot(LIMIT_SUMMARY, 9000, 20), bot(REFUSED_REPLY, 10)]);
+  assert.deepEqual(decision, { kind: "wait", availableAt: new Date(now.getTime() + 14_000), delayGuessed: false });
+});
+
+test("a refusal after the time that the summary gave falls back to a guess", () => {
+  const decision = decideWith([bot(LIMIT_SUMMARY, 9000, 600), bot(REFUSED_REPLY, 60)]);
+  assert.deepEqual(decision, { kind: "wait", availableAt: new Date(now.getTime() - 60_000 + 3_600_000), delayGuessed: true });
+});
+
+test("a newer notice on another pull request of the developer gives the time", () => {
+  const own = [bot(REFUSED_REPLY, 300)];
+  const quota = [...quotaSignals("acme/web#1", own, []), ...quotaSignals("acme/api#2", [bot(LIMIT_SUMMARY, 9000, 20)], [])];
+  assert.deepEqual(decideWith(own, quota), {
+    kind: "wait",
+    availableAt: new Date(now.getTime() + 14_000),
+    delayGuessed: false,
+    source: { pr: "acme/api#2", at: new Date(now.getTime() - 20_000) },
+  });
+});
+
+test("reviews left on another pull request after the refusal mean the quota is back", () => {
+  const own = [bot(REFUSED_REPLY, 300)];
+  const otherReviews = [botReview("APPROVED", "x", 100)];
+  const quota = [...quotaSignals("acme/web#1", own, []), ...quotaSignals("acme/api#2", [bot(FREE_SUMMARY(1), 9000, 90)], otherReviews)];
+  assert.deepEqual(decideWith(own, quota), {
+    kind: "trigger",
+    availableAt: new Date(now.getTime() - 100_000),
+    source: { pr: "acme/api#2", at: new Date(now.getTime() - 100_000) },
+  });
+});
+
+test("reviews left before the refusal do not free the quota", () => {
+  const own = [bot(REFUSED_REPLY, 300)];
+  const quota = [...quotaSignals("acme/web#1", own, []), ...quotaSignals("acme/api#2", [bot(FREE_SUMMARY(3), 9000, 400)], [botReview("APPROVED", "x", 400)])];
+  assert.equal(decideWith(own, quota).kind, "wait");
+});
+
+test("quotaSignals dates a free signal by the review, not by a later edit of the summary", () => {
+  const signals = quotaSignals("acme/api#2", [bot(FREE_SUMMARY(2), 9000, 10)], [botReview("APPROVED", "x", 500)]);
+  assert.deepEqual(signals, [{ kind: "free", pr: "acme/api#2", at: now.getTime() - 500_000 }]);
+});
+
+test("quotaSignals ignores the remaining count of a summary that is not settled, and reads zero as a refusal", () => {
+  assert.deepEqual(quotaSignals("p", [bot(`${LIMIT_SUMMARY} 2 remain after this review.`, 9000, 10)], []), [
+    { kind: "limit", pr: "p", at: now.getTime() - 10_000, availableAt: now.getTime() + 24_000 },
+  ]);
+  assert.deepEqual(quotaSignals("p", [bot(FREE_SUMMARY(0), 9000, 10)], []), [{ kind: "refusal", pr: "p", at: now.getTime() - 10_000 }]);
 });

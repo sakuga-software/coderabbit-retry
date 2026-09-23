@@ -3,7 +3,7 @@ import Spinner from "ink-spinner";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ACTIONS, actionForKey, commandBody, moveSelection, refusal, reselect, type Action, type Command } from "./actions.js";
-import { decide, type Decision, type Verdict } from "./decide.js";
+import { decide, quotaSignals, type Comment, type Decision, type QuotaSource, type Review, type Verdict } from "./decide.js";
 import * as github from "./github.js";
 import type { PullRequest } from "./github.js";
 import { createMouseParser, DISABLE_MOUSE, ENABLE_MOUSE, isMouseFragment } from "./mouse.js";
@@ -26,6 +26,7 @@ interface Row {
   posted?: { command: Command; url: string };
   error?: string;
   left?: LeftStatus;
+  fetched?: { head: string; reviews: Review[]; comments: Comment[] };
 }
 
 export type GitHub = Pick<typeof github, "listPullRequests" | "fetchReviewState" | "postCommand" | "openInBrowser">;
@@ -155,6 +156,20 @@ export function App(props: AppProps) {
       return run;
     }
 
+    // The quota belongs to the developer, so every row reads the quota signals of all the rows.
+    // A new fetch on one row can thus change the decision of the others, with no API call.
+    function redecide() {
+      const now = new Date();
+      const quota = [...rowsRef.current].flatMap(([key, row]) =>
+        row.fetched ? quotaSignals(key, row.fetched.comments, row.fetched.reviews) : [],
+      );
+      for (const [key, row] of rowsRef.current) {
+        if (!row.fetched || row.left) continue;
+        rowsRef.current.set(key, { ...row, decision: decide({ ...row.fetched, now, pr: key, quota }) });
+      }
+      setRows([...rowsRef.current.values()]);
+    }
+
     async function refresh(pr: PullRequest): Promise<Decision | undefined> {
       update(pr, { activity: "loading" });
       try {
@@ -163,9 +178,9 @@ export function App(props: AppProps) {
           update(pr, { left: status, activity: undefined, error: undefined });
           return undefined;
         }
-        const decision = decide({ ...state, now: new Date() });
-        update(pr, { decision, left: undefined, activity: undefined, error: undefined });
-        return decision;
+        update(pr, { fetched: state, left: undefined, activity: undefined, error: undefined });
+        redecide();
+        return rowOf(pr).decision;
       } catch (error) {
         update(pr, { activity: undefined, error: message(error) });
         return undefined;
@@ -689,7 +704,7 @@ function describe(row: Row, now: Date, options: Options): View {
         icon: <Text color="yellow">◷</Text>,
         label: "quota",
         color: "yellow",
-        detail: `quota back ${when} (at ${formatTime(decision.availableAt)})${guess}`,
+        detail: `quota back ${when} (at ${formatTime(decision.availableAt)})${guess}${sourceNote(decision.source, options)}`,
       };
     }
     case "pending":
@@ -705,7 +720,7 @@ function describe(row: Row, now: Date, options: Options): View {
         icon: <Text color="blue">↻</Text>,
         label: "to retry",
         color: "blue",
-        detail: `quota back for ${since}${options.dryRun ? " · dry run, nothing posted" : ""}`,
+        detail: `quota back for ${since}${sourceNote(decision.source, options)}${options.dryRun ? " · dry run, nothing posted" : ""}`,
       };
     }
   }
@@ -889,6 +904,12 @@ function Controls({ confirmation, flash, registerButton, disabledCommands, hideL
       )}
     </Box>
   );
+}
+
+function sourceNote(source: QuotaSource | undefined, options: Options): string {
+  if (!source) return "";
+  const name = source.pr.startsWith(`${options.org}/`) ? source.pr.slice(options.org.length + 1) : source.pr;
+  return ` · read on ${name} at ${formatTime(source.at)}`;
 }
 
 function formatDuration(ms: number, precise: boolean): string {
