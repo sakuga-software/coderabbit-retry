@@ -57,7 +57,14 @@ interface AppProps {
   timing?: Timing;
 }
 
-export function App({ options, gitHub = github, timing = DEFAULT_TIMING }: AppProps) {
+export function App(props: AppProps) {
+  // The workflow posts comments. If a new prop restarts it, it posts again and loses its repost guard.
+  // Thus the component keeps the props of its first render.
+  const [{ options, gitHub, timing }] = useState(() => ({
+    options: props.options,
+    gitHub: props.gitHub ?? github,
+    timing: props.timing ?? DEFAULT_TIMING,
+  }));
   const { exit } = useApp();
   const [rows, setRows] = useState<Row[] | null>(null);
   const [fatal, setFatal] = useState<string>();
