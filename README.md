@@ -62,7 +62,7 @@ coderabbit-retry --help          # options and states
 - If a refusal came after the time that the newest notice gave, the tool assumes 1 hour.
 - The tool only sees the pull requests that it lists. A review on a pull request outside the list
   spends the same quota, and the tool does not see it.
-- The tool posts one request at a time, and waits for the reply to each one for 90 s at most.
+- The tool posts one request at a time, and polls for the reply to each one for about 90 s.
   A new rate limit puts the other pull requests on hold.
 - With `--watch`, the tool searches the pull requests again once a minute. It adds the new
   ones, and shows the ones that are merged, closed or back to draft. It never posts on those.
@@ -89,7 +89,7 @@ Piped or scheduled runs stay as they are.
 | `q` | quit |
 
 Each post asks for a confirmation: `y` or `Enter` posts, `n` or `Esc` cancels. A post goes
-through the same queue as the automatic retries: one post at a time, with a wait of 90 s at most
+through the same queue as the automatic retries: one post at a time, with about 90 s of polling
 for the reply to each one. A click selects a row or presses a button of the bar. The mouse mode takes over
 text selection: hold Shift or Option, depending on the terminal, to select text. A merged or
 closed pull request accepts only `o`, and `--dry-run` disables every post.

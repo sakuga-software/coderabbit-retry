@@ -51,7 +51,7 @@ const cli = meow(
   command with no delay only dates the refusal. "N remain after this review"
   on a later review means the quota is back. If a refusal came after the time
   that the newest notice gave, the tool assumes 1 hour. It posts one request
-  at a time, and waits for the reply to each one for 90 s at most.
+  at a time, and polls for the reply to each one for about 90 s.
 
   With --watch, the tool searches the pull requests again once a minute. It
   adds the new ones, shows the ones that are merged, closed or back to draft,
