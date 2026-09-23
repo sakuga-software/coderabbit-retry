@@ -255,5 +255,20 @@ test("quotaSignals ignores the remaining count of a summary that is not settled,
   assert.deepEqual(quotaSignals("p", [bot(`${LIMIT_SUMMARY} 2 remain after this review.`, 9000, 10)], []), [
     { kind: "limit", pr: "p", at: now.getTime() - 10_000, availableAt: now.getTime() + 24_000 },
   ]);
-  assert.deepEqual(quotaSignals("p", [bot(FREE_SUMMARY(0), 9000, 10)], []), [{ kind: "refusal", pr: "p", at: now.getTime() - 10_000 }]);
+  assert.deepEqual(quotaSignals("p", [bot(FREE_SUMMARY(0), 9000, 10)], []), [{ kind: "refusal", pr: "p", at: now.getTime() - 9_000_000 }]);
+});
+
+test("a free signal older than a newer refusal does not free the quota", () => {
+  const own = [bot(REFUSED_REPLY, 300)];
+  const quota = [
+    ...quotaSignals("acme/web#1", own, []),
+    ...quotaSignals("acme/api#2", [bot(FREE_SUMMARY(1), 9000, 200)], [botReview("APPROVED", "x", 200)]),
+    ...quotaSignals("acme/api#3", [bot(REFUSED_REPLY, 100)], []),
+  ];
+  assert.equal(decideWith(own, quota).kind, "wait");
+});
+
+test("quotaSignals dates a free signal with no review by the creation of the summary", () => {
+  const signals = quotaSignals("acme/api#2", [bot(FREE_SUMMARY(2), 9000, 10)], []);
+  assert.deepEqual(signals, [{ kind: "free", pr: "acme/api#2", at: now.getTime() - 9_000_000 }]);
 });

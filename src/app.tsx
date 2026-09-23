@@ -3,7 +3,7 @@ import Spinner from "ink-spinner";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ACTIONS, actionForKey, commandBody, moveSelection, refusal, reselect, type Action, type Command } from "./actions.js";
-import { decide, quotaSignals, type Comment, type Decision, type QuotaSource, type Review, type Verdict } from "./decide.js";
+import { BOT_LOGIN, decide, quotaSignals, type Comment, type Decision, type QuotaSource, type Review, type Verdict } from "./decide.js";
 import * as github from "./github.js";
 import type { PullRequest } from "./github.js";
 import { createMouseParser, DISABLE_MOUSE, ENABLE_MOUSE, isMouseFragment } from "./mouse.js";
@@ -135,7 +135,6 @@ export function App(props: AppProps) {
     const abort = new AbortController();
     const { signal } = abort;
     const lastPostedAt = new Map<string, number>();
-    let orgBlockedUntil = 0;
     let postLock = Promise.resolve();
 
     const update = (pr: PullRequest, patch: Partial<Row>) => {
@@ -207,8 +206,8 @@ export function App(props: AppProps) {
         update(pr, { activity: undefined, error: message(error) });
         return false;
       }
-      const reply = await waitForReply(pr);
-      if (reply?.kind === "wait") orgBlockedUntil = reply.availableAt.getTime();
+      // The reply of CodeRabbit lands in the comments. The next redecide() applies it to every row.
+      await waitForReply(pr);
       return true;
     }
 
@@ -231,17 +230,20 @@ export function App(props: AppProps) {
         }),
     };
 
+    // A request of this session with no reply from CodeRabbit yet blocks a new one on the same pull request.
+    // A reply, such as a refusal, ends the block: a later signal can then free the quota again.
+    function unanswered(row: Row, postedAt: number | undefined): boolean {
+      if (postedAt === undefined || Date.now() - postedAt >= REPOST_GUARD_MS) return false;
+      return !row.fetched?.comments.some((comment) => comment.user?.login === BOT_LOGIN && Date.parse(comment.updated_at) > postedAt);
+    }
+
     async function triggerReady(prs: PullRequest[]) {
       if (options.dryRun) return;
       for (const pr of prs) {
         await exclusive(async () => {
           const row = rowOf(pr);
           if (row.left || row.decision?.kind !== "trigger") return;
-          if (Date.now() < orgBlockedUntil) {
-            update(pr, { decision: { kind: "wait", availableAt: new Date(orgBlockedUntil), delayGuessed: false } });
-            return;
-          }
-          if (Date.now() - (lastPostedAt.get(keyOf(pr)) ?? 0) < REPOST_GUARD_MS) return;
+          if (unanswered(row, lastPostedAt.get(keyOf(pr)))) return;
           if (await post(pr, "review")) setTriggered((count) => count + 1);
         });
       }

@@ -133,9 +133,10 @@ export function quotaSignals(pr: string, comments: Comment[], reviews: Review[])
   const summary = botComments.findLast(isSummary);
   const remaining = summary && !NOT_SETTLED.test(summary.body) ? REMAINING.exec(summary.body) : null;
   if (summary && remaining) {
-    // A later edit moves the updated_at of the summary but can keep this line. The review date is earlier, thus safe.
+    // A later edit moves the updated_at of the summary but can keep this line.
+    // The review date, or else the creation of the summary, is earlier, thus safe.
     const lastReview = reviews.filter(isBot).at(-1);
-    const at = lastReview ? time(lastReview.submitted_at) : time(summary.updated_at);
+    const at = lastReview ? time(lastReview.submitted_at) : time(summary.created_at);
     signals.push(Number(remaining[1]) > 0 ? { kind: "free", pr, at } : { kind: "refusal", pr, at });
   }
   return signals;
@@ -147,12 +148,13 @@ type QuotaEstimate =
 
 /**
  * Estimates when the quota comes back for a pull request that CodeRabbit refused at limitAt.
- * A free signal after the refusal means that the quota is back. Otherwise the newest notice with a delay
+ * A free signal after the last refusal or notice means that the quota is back. Otherwise the newest notice with a delay
  * gives the time, unless a refusal came after that time: then the tool falls back to a guess.
  */
 function estimateQuota(limitAt: number, signals: QuotaSignal[]): QuotaEstimate {
   const byTime = signals.toSorted((a, b) => a.at - b.at);
-  const free = byTime.findLast((signal) => signal.kind === "free" && signal.at > limitAt);
+  const lastExhaustion = Math.max(limitAt, ...byTime.filter((signal) => signal.kind !== "free").map((signal) => signal.at));
+  const free = byTime.findLast((signal) => signal.kind === "free" && signal.at > lastExhaustion);
   if (free) return { free: true, availableAt: free.at, source: free };
   const notice = byTime.findLast((signal) => signal.kind === "limit");
   const lastRefusal = Math.max(limitAt, ...byTime.filter((signal) => signal.kind === "refusal").map((signal) => signal.at));
