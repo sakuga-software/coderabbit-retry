@@ -434,7 +434,10 @@ export function App(props: AppProps) {
       // Wait a moment: if the rest of a mouse report follows, the Escape was part of it.
       if (key.escape) {
         clearTimeout(pendingEscape.current);
-        pendingEscape.current = setTimeout(() => typeKey("\u001B"), 60);
+        const prompt = confirmationRef.current;
+        pendingEscape.current = setTimeout(() => {
+          if (prompt && confirmationRef.current === prompt) typeKey("\u001B");
+        }, 60);
         return;
       }
       // A paste must answer at most one prompt, and never a prompt that it opened itself.
@@ -476,6 +479,7 @@ export function App(props: AppProps) {
     };
     stdin.on("data", onData);
     return () => {
+      clearTimeout(pendingEscape.current);
       stdin.off("data", onData);
       process.off("exit", disable);
       disable();
