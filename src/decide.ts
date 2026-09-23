@@ -46,7 +46,7 @@ const isBot = (item: { user: { login: string } | null }) => item.user?.login ===
 const isRateLimit = (comment: Comment) =>
   /rate limited by coderabbit\.ai|Review rate limited/.test(comment.body);
 const isTriggerReply = (comment: Comment) =>
-  !isRateLimit(comment) && /Review triggered|Full review triggered|Action performed/.test(comment.body);
+  !isRateLimit(comment) && /review (triggered|finished)/i.test(comment.body);
 const isBareRequest = (comment: Comment) =>
   /^\s*@coderabbitai\s+(full\s+)?review\s*$/.test(comment.body);
 const time = (iso: string) => Date.parse(iso);

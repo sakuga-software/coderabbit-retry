@@ -1,11 +1,14 @@
-import { Box, Text, useApp } from "ink";
+import { Box, Text, useApp, useInput, useStdin, useStdout, useWindowSize, type DOMElement } from "ink";
 import Spinner from "ink-spinner";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { setTimeout as sleep } from "node:timers/promises";
+import { ACTIONS, actionForKey, commandBody, moveSelection, refusal, type Action, type Command } from "./actions.js";
 import { decide, type Decision } from "./decide.js";
 import * as github from "./github.js";
 import type { PullRequest } from "./github.js";
+import { createMouseParser, DISABLE_MOUSE, ENABLE_MOUSE, isMouseFragment } from "./mouse.js";
 import { planSync, type LeftStatus } from "./sync.js";
+import { visibleRange } from "./viewport.js";
 
 export interface Options {
   org: string;
@@ -13,18 +16,19 @@ export interface Options {
   since: string;
   watch: boolean;
   dryRun: boolean;
+  interactive: boolean;
 }
 
 interface Row {
   pr: PullRequest;
   decision?: Decision;
-  activity?: "loading" | "posting";
-  postedUrl?: string;
+  activity?: "loading" | { posting: Command };
+  posted?: { command: Command; url: string };
   error?: string;
   left?: LeftStatus;
 }
 
-export type GitHub = Pick<typeof github, "listPullRequests" | "fetchReviewState" | "requestReview">;
+export type GitHub = Pick<typeof github, "listPullRequests" | "fetchReviewState" | "postCommand" | "openInBrowser">;
 
 export interface Timing {
   replyPollMs: number;
@@ -36,9 +40,13 @@ export interface Timing {
 const DEFAULT_TIMING: Timing = { replyPollMs: 5_000, replyTimeoutMs: 90_000, watchPollMs: 30_000, listRefreshMs: 60_000 };
 const REPOST_GUARD_MS = 15 * 60_000;
 const BRAND = "#FF570A";
+const REVIEW_COMMANDS: readonly Command[] = ["review", "full review"];
+// Lines outside the list in interactive mode: the header, the margin, the scroll hints and the footer.
+const CHROME_LINES = 11;
 
 const keyOf = (pr: PullRequest) => `${pr.repo}#${pr.number}`;
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+const rowHeight = (row: Row) => (row.posted ? 4 : 3);
 
 function needsWatch(row: Row, dryRun: boolean): boolean {
   if (row.left) return false;
@@ -53,6 +61,34 @@ function needsWatch(row: Row, dryRun: boolean): boolean {
     default:
       return false;
   }
+}
+
+function absoluteRect(node: DOMElement) {
+  let x = 0;
+  let y = 0;
+  for (let current: DOMElement | undefined = node; current?.yogaNode; current = current.parentNode) {
+    x += current.yogaNode.getComputedLeft();
+    y += current.yogaNode.getComputedTop();
+  }
+  return { x, y, width: node.yogaNode?.getComputedWidth() ?? 0, height: node.yogaNode?.getComputedHeight() ?? 0 };
+}
+
+function hitTest(nodes: Map<string, DOMElement>, x: number, y: number): string | undefined {
+  for (const [id, node] of nodes) {
+    const rect = absoluteRect(node);
+    if (x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height) return id;
+  }
+  return undefined;
+}
+
+interface Confirmation {
+  key: string;
+  action: Action;
+  warning?: string;
+}
+
+interface PostControls {
+  post(pr: PullRequest, command: Command): Promise<void>;
 }
 
 interface AppProps {
@@ -70,6 +106,9 @@ export function App(props: AppProps) {
     timing: props.timing ?? DEFAULT_TIMING,
   }));
   const { exit } = useApp();
+  const { stdin } = useStdin();
+  const { stdout } = useStdout();
+  const { rows: screenRows } = useWindowSize();
   const [rows, setRows] = useState<Row[] | null>(null);
   const [fatal, setFatal] = useState<string>();
   const [done, setDone] = useState(false);
@@ -77,13 +116,21 @@ export function App(props: AppProps) {
   const [now, setNow] = useState(() => new Date());
   const [nextCheckAt, setNextCheckAt] = useState<Date>();
   const [listError, setListError] = useState<string>();
+  const [selected, setSelected] = useState<string>();
+  const [confirmation, setConfirmation] = useState<Confirmation>();
+  const [flash, setFlash] = useState<{ text: string; color: string }>();
   const rowsRef = useRef(new Map<string, Row>());
+  const controls = useRef<PostControls>(null);
+  const rowNodes = useRef(new Map<string, DOMElement>());
+  const buttonNodes = useRef(new Map<string, DOMElement>());
+  const scrollStart = useRef(0);
 
   useEffect(() => {
     const abort = new AbortController();
     const { signal } = abort;
     const lastPostedAt = new Map<string, number>();
     let orgBlockedUntil = 0;
+    let postLock = Promise.resolve();
 
     const update = (pr: PullRequest, patch: Partial<Row>) => {
       const key = keyOf(pr);
@@ -91,6 +138,14 @@ export function App(props: AppProps) {
       setRows([...rowsRef.current.values()]);
     };
     const rowOf = (pr: PullRequest) => rowsRef.current.get(keyOf(pr))!;
+
+    // The CodeRabbit quota is shared by the whole org. Posts go one at a time, and each one
+    // waits for the reply before the next: a new rate limit blocks all the other PRs too.
+    function exclusive(task: () => Promise<void>): Promise<void> {
+      const run = postLock.then(task);
+      postLock = run.catch(() => {});
+      return run;
+    }
 
     async function refresh(pr: PullRequest): Promise<Decision | undefined> {
       update(pr, { activity: "loading" });
@@ -119,31 +174,46 @@ export function App(props: AppProps) {
       return decision;
     }
 
-    // The CodeRabbit quota is shared by the whole org. Post one request at a time, and read
-    // the reply before the next one: a new rate limit blocks all the other PRs too.
+    async function post(pr: PullRequest, command: Command): Promise<boolean> {
+      update(pr, { activity: { posting: command } });
+      try {
+        const url = await gitHub.postCommand(pr, command);
+        if (REVIEW_COMMANDS.includes(command)) lastPostedAt.set(keyOf(pr), Date.now());
+        update(pr, { activity: undefined, posted: { command, url } });
+      } catch (error) {
+        update(pr, { activity: undefined, error: message(error) });
+        return false;
+      }
+      const reply = await waitForReply(pr);
+      if (reply?.kind === "wait") orgBlockedUntil = reply.availableAt.getTime();
+      return true;
+    }
+
+    controls.current = {
+      post: (pr, command) =>
+        exclusive(async () => {
+          const posted = await post(pr, command);
+          setFlash(
+            posted
+              ? { text: `Posted "${commandBody(command)}" on ${keyOf(pr)}.`, color: "green" }
+              : { text: `Could not post on ${keyOf(pr)}.`, color: "red" },
+          );
+        }),
+    };
+
     async function triggerReady(prs: PullRequest[]) {
       if (options.dryRun) return;
       for (const pr of prs) {
-        const row = rowOf(pr);
-        if (row.left || row.decision?.kind !== "trigger") continue;
-        if (Date.now() < orgBlockedUntil) {
-          update(pr, { decision: { kind: "wait", availableAt: new Date(orgBlockedUntil), delayGuessed: false } });
-          continue;
-        }
-        if (Date.now() - (lastPostedAt.get(keyOf(pr)) ?? 0) < REPOST_GUARD_MS) continue;
-
-        update(pr, { activity: "posting" });
-        try {
-          const url = await gitHub.requestReview(pr);
-          lastPostedAt.set(keyOf(pr), Date.now());
-          update(pr, { activity: undefined, postedUrl: url });
-          setTriggered((count) => count + 1);
-        } catch (error) {
-          update(pr, { activity: undefined, error: message(error) });
-          continue;
-        }
-        const reply = await waitForReply(pr);
-        if (reply?.kind === "wait") orgBlockedUntil = reply.availableAt.getTime();
+        await exclusive(async () => {
+          const row = rowOf(pr);
+          if (row.left || row.decision?.kind !== "trigger") return;
+          if (Date.now() < orgBlockedUntil) {
+            update(pr, { decision: { kind: "wait", availableAt: new Date(orgBlockedUntil), delayGuessed: false } });
+            return;
+          }
+          if (Date.now() - (lastPostedAt.get(keyOf(pr)) ?? 0) < REPOST_GUARD_MS) return;
+          if (await post(pr, "review")) setTriggered((count) => count + 1);
+        });
       }
     }
 
@@ -166,6 +236,7 @@ export function App(props: AppProps) {
       const added = plan.added.map((key) => listed.get(key)!);
       for (const pr of added) rowsRef.current.set(keyOf(pr), { pr, activity: "loading" });
       setRows([...rowsRef.current.values()]);
+      setSelected((current) => current ?? [...rowsRef.current.keys()][0]);
       await Promise.all([...added, ...plan.recheck.map((key) => rowsRef.current.get(key)!.pr)].map(refresh));
     }
 
@@ -222,7 +293,108 @@ export function App(props: AppProps) {
     if (done) exit(fatal ? new Error(fatal) : undefined);
   }, [done]);
 
+  const keys = rows?.map((row) => keyOf(row.pr)) ?? [];
+
+  function request(action: Action, key = selected) {
+    const row = key ? rowsRef.current.get(key) : undefined;
+    if (!row || !key) return;
+    const refused = refusal(action, { left: row.left !== undefined, dryRun: options.dryRun });
+    if (refused) {
+      setFlash({ text: `Cannot ${action.label} ${key}: ${refused}.`, color: "yellow" });
+      return;
+    }
+    if (!action.command) {
+      gitHub.openInBrowser(row.pr.url);
+      setFlash({ text: `Opened ${key} in the browser.`, color: "green" });
+      return;
+    }
+    const quota =
+      REVIEW_COMMANDS.includes(action.command) && row.decision?.kind === "wait"
+        ? `The quota comes back at ${formatTime(row.decision.availableAt)}: CodeRabbit will likely refuse.`
+        : undefined;
+    setFlash(undefined);
+    setConfirmation({ key, action, warning: quota });
+  }
+
+  function answer(yes: boolean) {
+    const pending = confirmation;
+    setConfirmation(undefined);
+    if (!pending?.action.command) return;
+    const row = rowsRef.current.get(pending.key);
+    if (!yes || !row) {
+      setFlash({ text: "Cancelled.", color: "gray" });
+      return;
+    }
+    setFlash({ text: `Posting "${commandBody(pending.action.command)}" on ${pending.key}…`, color: "blue" });
+    void controls.current?.post(row.pr, pending.action.command);
+  }
+
+  function press(id: string) {
+    if (id === "yes" || id === "no") return answer(id === "yes");
+    if (confirmation) return;
+    const action = actionForKey(id);
+    if (action) request(action);
+  }
+
+  const move = (step: number) => setSelected((current) => moveSelection(keys, current, step));
+
+  useInput(
+    (input, key) => {
+      if (isMouseFragment(input)) return;
+      if (confirmation) {
+        if (input === "y") answer(true);
+        else if (input === "n" || key.escape) answer(false);
+        return;
+      }
+      if (key.upArrow || input === "k") move(-1);
+      else if (key.downArrow || input === "j") move(1);
+      else if (key.return) press("o");
+      else if (input === "q") exit();
+      else if (input.length === 1) press(input);
+    },
+    { isActive: options.interactive },
+  );
+
+  const handlers = useRef({ press, move, select: setSelected });
+  handlers.current = { press, move, select: setSelected };
+
+  useEffect(() => {
+    if (!options.interactive) return;
+    const disable = () => stdout.write(DISABLE_MOUSE);
+    stdout.write(ENABLE_MOUSE);
+    process.once("exit", disable);
+    const feed = createMouseParser((event) => {
+      if (event.kind === "wheel") return handlers.current.move(event.direction === "up" ? -1 : 1);
+      const button = hitTest(buttonNodes.current, event.x, event.y);
+      if (button) return handlers.current.press(button);
+      const row = hitTest(rowNodes.current, event.x, event.y);
+      if (row) handlers.current.select(row);
+    });
+    const onData = (data: Buffer | string) => feed(data.toString());
+    stdin.on("data", onData);
+    return () => {
+      stdin.off("data", onData);
+      process.off("exit", disable);
+      disable();
+    };
+  }, []);
+
   const clock = options.watch ? now : new Date();
+  const selectedIndex = selected ? keys.indexOf(selected) : 0;
+  const range =
+    options.interactive && rows
+      ? visibleRange(rows.map(rowHeight), selectedIndex, Math.max(3, screenRows - CHROME_LINES), scrollStart.current)
+      : { start: 0, end: rows?.length ?? 0 };
+  scrollStart.current = range.start;
+
+  const registerRow = (key: string) => (node: DOMElement | null) => {
+    if (node) rowNodes.current.set(key, node);
+    else rowNodes.current.delete(key);
+  };
+  const registerButton = (id: string) => (node: DOMElement | null) => {
+    if (node) buttonNodes.current.set(id, node);
+    else buttonNodes.current.delete(id);
+  };
 
   return (
     <Box flexDirection="column" paddingX={1}>
@@ -242,9 +414,22 @@ export function App(props: AppProps) {
       )}
       {rows && rows.length > 0 && (
         <Box flexDirection="column" marginTop={1}>
-          {rows.map((row) => (
-            <RowView key={keyOf(row.pr)} row={row} now={clock} options={options} />
+          {options.interactive && (
+            <Text dimColor>{range.start > 0 ? `  ↑ ${range.start} more` : " "}</Text>
+          )}
+          {rows.slice(range.start, range.end).map((row) => (
+            <RowView
+              key={keyOf(row.pr)}
+              ref={registerRow(keyOf(row.pr))}
+              row={row}
+              now={clock}
+              options={options}
+              selected={options.interactive && keyOf(row.pr) === selected}
+            />
           ))}
+          {options.interactive && (
+            <Text dimColor>{range.end < rows.length ? `  ↓ ${rows.length - range.end} more` : " "}</Text>
+          )}
         </Box>
       )}
       {fatal && <Text color="red">✖ {fatal}</Text>}
@@ -259,6 +444,14 @@ export function App(props: AppProps) {
           options={options}
         />
       )}
+      {options.interactive && (
+        <Controls
+          confirmation={confirmation}
+          flash={flash}
+          registerButton={registerButton}
+          disabledCommands={options.dryRun}
+        />
+      )}
     </Box>
   );
 }
@@ -266,14 +459,14 @@ export function App(props: AppProps) {
 function Header({ options }: { options: Options }) {
   return (
     <Box flexDirection="column">
-      <Text>
+      <Text wrap="truncate-end">
         <Text color={BRAND} bold>
           🐇 coderabbit-retry
         </Text>
         {options.watch && <Text color="cyan"> [watch]</Text>}
         {options.dryRun && <Text color="yellow"> [dry-run]</Text>}
       </Text>
-      <Text dimColor>
+      <Text dimColor wrap="truncate-end">
         Open pull requests by {options.author} in {options.org} since {formatDay(options.since)}
       </Text>
     </Box>
@@ -304,8 +497,14 @@ function describe(row: Row, now: Date, options: Options): View {
       <Spinner type="dots" />
     </Text>
   );
-  if (row.activity === "posting") {
-    return { icon: spinner("blue"), label: "retrying", color: "blue", detail: "posting \"@coderabbitai review\"…" };
+  if (typeof row.activity === "object") {
+    const command = row.activity.posting;
+    return {
+      icon: spinner("blue"),
+      label: command === "review" ? "retrying" : "posting",
+      color: "blue",
+      detail: `posting "${commandBody(command)}"…`,
+    };
   }
   if (row.left) return LEFT_VIEWS[row.left];
   if (row.error) return { icon: <Text color="red">✖</Text>, label: "error", color: "red", detail: row.error };
@@ -357,12 +556,28 @@ function describe(row: Row, now: Date, options: Options): View {
   }
 }
 
-function RowView({ row, now, options }: { row: Row; now: Date; options: Options }) {
+interface RowViewProps {
+  ref: (node: DOMElement | null) => void;
+  row: Row;
+  now: Date;
+  options: Options;
+  selected: boolean;
+}
+
+function RowView({ ref, row, now, options, selected }: RowViewProps) {
   const view = describe(row, now, options);
   const name = row.pr.repo.startsWith(`${options.org}/`) ? row.pr.repo.slice(options.org.length + 1) : row.pr.repo;
+  const indent = options.interactive ? 21 : 19;
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Box ref={ref} flexDirection="column" marginBottom={1}>
       <Box>
+        {options.interactive && (
+          <Box width={2} flexShrink={0}>
+            <Text color={BRAND} bold>
+              {selected ? "❯" : " "}
+            </Text>
+          </Box>
+        )}
         <Box width={3} flexShrink={0}>
           {view.icon}
         </Box>
@@ -372,21 +587,21 @@ function RowView({ row, now, options }: { row: Row; now: Date; options: Options 
           </Text>
         </Box>
         <Box flexShrink={0} marginRight={2}>
-          <Text bold>
+          <Text bold inverse={selected}>
             {name}#{row.pr.number}
           </Text>
         </Box>
         <Text wrap="truncate-end">{row.pr.title}</Text>
       </Box>
-      <Box paddingLeft={19}>
+      <Box paddingLeft={indent}>
         <Text dimColor wrap="truncate-end">
           {view.detail}
         </Text>
       </Box>
-      {row.postedUrl && (
-        <Box paddingLeft={19}>
+      {row.posted && (
+        <Box paddingLeft={indent}>
           <Text color="green" wrap="truncate-end">
-            ↻ retried → {row.postedUrl}
+            ↻ {row.posted.command === "review" ? "retried" : commandBody(row.posted.command)} → {row.posted.url}
           </Text>
         </Box>
       )}
@@ -423,19 +638,84 @@ function Footer({ rows, triggered, done, now, nextCheckAt, listError, options }:
 
   return (
     <Box flexDirection="column">
-      <Text>{parts.length > 0 ? parts.join(" · ") : "Nothing to do."}</Text>
+      <Text wrap="truncate-end">{parts.length > 0 ? parts.join(" · ") : "Nothing to do."}</Text>
       {options.watch && !done && (
-        <Text dimColor>
+        <Text dimColor wrap="truncate-end">
           Watching
           {nextCheckAt ? ` · next check in ${formatDuration(nextCheckAt.getTime() - now.getTime(), true)}` : " · checking…"}
-          {" · Ctrl+C to quit"}
+          {options.interactive ? "" : " · Ctrl+C to quit"}
         </Text>
       )}
-      {listError && <Text color="red">The list refresh failed: {listError}</Text>}
+      {listError && (
+        <Text color="red" wrap="truncate-end">
+          The list refresh failed: {listError}
+        </Text>
+      )}
       {!options.watch && done && waiting > 0 && (
         <Text dimColor>
           Tip: <Text color={BRAND}>coderabbit-retry --watch</Text> waits for the quota and retries by itself.
         </Text>
+      )}
+    </Box>
+  );
+}
+
+interface ControlsProps {
+  confirmation?: Confirmation;
+  flash?: { text: string; color: string };
+  registerButton: (id: string) => (node: DOMElement | null) => void;
+  disabledCommands: boolean;
+}
+
+function Button({ id, hotkey, label, dim, register }: { id: string; hotkey: string; label: string; dim?: boolean; register: ControlsProps["registerButton"] }) {
+  return (
+    <Box ref={register(id)} marginRight={2} flexShrink={0}>
+      <Text dimColor={dim}>
+        <Text color={dim ? undefined : BRAND} bold>
+          {hotkey}
+        </Text>{" "}
+        {label}
+      </Text>
+    </Box>
+  );
+}
+
+function Controls({ confirmation, flash, registerButton, disabledCommands }: ControlsProps) {
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      {confirmation ? (
+        <>
+          <Box>
+            <Text wrap="truncate-end">
+              Post <Text bold>"{commandBody(confirmation.action.command!)}"</Text> on{" "}
+              <Text bold>{confirmation.key}</Text>?{"  "}
+            </Text>
+            <Button id="yes" hotkey="y" label="yes" register={registerButton} />
+            <Button id="no" hotkey="n" label="no" register={registerButton} />
+          </Box>
+          <Text color="yellow" wrap="truncate-end">
+            {confirmation.warning ?? " "}
+          </Text>
+        </>
+      ) : (
+        <>
+          <Box>
+            {ACTIONS.map((action) => (
+              <Button
+                key={action.key}
+                id={action.key}
+                hotkey={action.key}
+                label={action.label}
+                dim={disabledCommands && action.command !== undefined}
+                register={registerButton}
+              />
+            ))}
+            <Text dimColor>↑↓ select · q quit</Text>
+          </Box>
+          <Text color={flash?.color} wrap="truncate-end">
+            {flash?.text ?? " "}
+          </Text>
+        </>
       )}
     </Box>
   );

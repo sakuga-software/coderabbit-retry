@@ -40,6 +40,19 @@ const cli = meow(
   With --watch, the tool searches the pull requests again once a minute. It
   adds the new ones and shows the ones that are merged, closed or back to draft.
 
+  Keys and mouse
+    With --watch in a terminal, the list takes keys and mouse clicks:
+    ↑ ↓  or  k j    select a pull request; the mouse wheel does it too
+    o  or  Enter    open the pull request in the browser
+    r               post "@coderabbitai review"
+    f               post "@coderabbitai full review"
+    a               post "@coderabbitai approve": resolve the threads, then approve
+    s               post "@coderabbitai resolve": resolve the threads
+    q               quit
+  Each post asks for a confirmation (y or n). A click selects a row or presses
+  a button. The mouse mode takes over text selection: hold Shift or Option,
+  depending on the terminal, to select text.
+
   Examples
     $ coderabbit-retry
     $ coderabbit-retry --watch
@@ -75,7 +88,9 @@ if (!/^\d{4}-\d{2}-\d{2}$/.test(since) || Number.isNaN(Date.parse(since))) {
   process.exit(2);
 }
 
-const app = render(<App options={{ ...cli.flags, since }} />);
+const interactive = cli.flags.watch && Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
+const app = render(<App options={{ ...cli.flags, since, interactive }} />, { alternateScreen: interactive });
+process.once("SIGTERM", () => app.unmount());
 try {
   await app.waitUntilExit();
 } catch {

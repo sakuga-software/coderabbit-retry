@@ -44,6 +44,27 @@ coderabbit-retry --help          # options and states
   ones, and shows the ones that are merged, closed or back to draft. It never posts on those.
   A draft that is ready for review again comes back into the watch.
 
+## Keys and mouse
+
+With `--watch` in a terminal, the tool opens in full screen and takes keys and mouse clicks.
+Piped or scheduled runs stay as they are.
+
+| Key | Action |
+| --- | --- |
+| `↑` `↓` or `k` `j` | select a pull request (the mouse wheel does it too) |
+| `o` or `Enter` | open the pull request in the browser |
+| `r` | post `@coderabbitai review` |
+| `f` | post `@coderabbitai full review` |
+| `a` | post `@coderabbitai approve`: resolve the CodeRabbit threads, then approve |
+| `s` | post `@coderabbitai resolve`: resolve the CodeRabbit threads |
+| `q` | quit |
+
+Each post asks for a confirmation (`y` or `n`), and goes through the same queue as the
+automatic retries: one post at a time, after the reply to the previous one. A click selects
+a row or presses a button of the bar. The mouse mode takes over text selection: hold Shift
+or Option, depending on the terminal, to select text. A merged or closed pull request
+accepts only `o`, and `--dry-run` disables every post.
+
 ## Development
 
 ```sh
@@ -56,7 +77,9 @@ pnpm typecheck
 
 The GIF uses the real interface and the real decision logic with a fake GitHub
 (`demo/demo.tsx`). The fake GitHub plays a timeline: a review in progress, a quota
-that comes back, a retry, a merged pull request, a new pull request, then the reviews. To see it live, run `pnpm demo`.
+that comes back, a retry, a merged pull request, a new pull request, then the reviews. At the end, it
+selects a pull request with the arrow keys and posts `@coderabbitai approve` with `a`, then `y`.
+To see it live, run `pnpm demo`.
 To record the GIF again (requires vhs, ttyd and ffmpeg):
 
 ```sh
