@@ -23,7 +23,7 @@ Requires Node 22 or later and an authenticated `gh` (`gh auth status`).
 
 ```sh
 coderabbit-retry                 # retry what can be retried, then quit
-coderabbit-retry --watch         # stay open and retry when the quota comes back
+coderabbit-retry --watch         # stay open until Ctrl+C, and retry when the quota comes back
 coderabbit-retry --dry-run       # show the decisions, but post nothing
 coderabbit-retry --org my-org    # the default organization is sakuga-software
 coderabbit-retry --help          # options and states
@@ -40,6 +40,9 @@ coderabbit-retry --help          # options and states
 - If the delay is unreadable, the tool assumes 1 hour.
 - The quota is shared by the whole organization. The tool posts one request at a time,
   after the reply to the previous one. A new rate limit puts the other pull requests on hold.
+- With `--watch`, the tool searches the pull requests again once a minute. It adds the new
+  ones, and shows the ones that are merged, closed or back to draft. It never posts on those.
+  A draft that is ready for review again comes back into the watch.
 
 ## Development
 
@@ -53,7 +56,7 @@ pnpm typecheck
 
 The GIF uses the real interface and the real decision logic with a fake GitHub
 (`demo/demo.tsx`). The fake GitHub plays a timeline: a review in progress, a quota
-that comes back, a retry, then the review. To see it live, run `pnpm demo`.
+that comes back, a retry, a merged pull request, a new pull request, then the reviews. To see it live, run `pnpm demo`.
 To record the GIF again (requires vhs, ttyd and ffmpeg):
 
 ```sh

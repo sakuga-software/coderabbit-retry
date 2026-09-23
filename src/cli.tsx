@@ -16,7 +16,7 @@ const cli = meow(
     -s, --since <YYYY-MM-DD>  Pull requests created on or after this date   (default: Monday of this week)
     -o, --org <org>           GitHub organization                           (default: ${DEFAULT_ORG})
     -a, --author <login>      Pull request author                           (default: @me)
-    -w, --watch               Stay open and retry each pull request when its quota comes back
+    -w, --watch               Stay open until Ctrl+C: retry each pull request when its quota comes back
     -n, --dry-run             Show the decisions, but post no comment
     -h, --help                Show this help
         --version             Show the version
@@ -28,11 +28,17 @@ const cli = meow(
     requested      a bare "@coderabbitai review" of less than 15 min waits for a reply
     nothing to do  the last commit has no review, but no rate limit is active
     to retry       the quota is back: posts a bare "@coderabbitai review"
+    merged         the pull request is merged; the tool no longer watches it
+    closed         the pull request is closed; the tool no longer watches it
+    draft          the pull request is back to draft; watched again if it is ready
 
   The delay comes from the current version of the CodeRabbit comment: its
   "available in …" starts at its last edit. The quota is shared by the whole
   organization, so the tool posts one request at a time, after the reply to
   the previous one.
+
+  With --watch, the tool searches the pull requests again once a minute. It
+  adds the new ones and shows the ones that are merged, closed or back to draft.
 
   Examples
     $ coderabbit-retry

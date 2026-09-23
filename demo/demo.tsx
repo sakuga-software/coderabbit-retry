@@ -2,7 +2,7 @@ import { render } from "ink";
 import { setTimeout as sleep } from "node:timers/promises";
 import { App, type GitHub } from "../src/app.js";
 import { BOT_LOGIN, REQUEST_BODY, type Comment, type Review } from "../src/decide.js";
-import type { PullRequest } from "../src/github.js";
+import type { PullRequest, PullRequestStatus } from "../src/github.js";
 
 const start = Date.now();
 const iso = (offsetMs: number) => new Date(start + offsetMs).toISOString();
@@ -44,10 +44,19 @@ const prs = [
   pr("api", 910, "fix(orders): one refund per order"),
   pr("web", 899, "docs: document the public API"),
 ];
+const lateArrival = pr("web", 921, "feat(search): filter the results by date");
+const CHANGE_AT = 8_000;
+const DEMO_LENGTH_MS = 32_000;
 
 let requestedAt: number | undefined;
 
-function state(target: PullRequest): { head: string; reviews: Review[]; comments: Comment[] } {
+type ReviewState = { head: string; reviews: Review[]; comments: Comment[] };
+
+function status(target: PullRequest): PullRequestStatus {
+  return target.number === 910 && elapsed() >= CHANGE_AT ? "merged" : "open";
+}
+
+function state(target: PullRequest): ReviewState {
   const t = elapsed();
   switch (target.number) {
     case 517:
@@ -60,14 +69,18 @@ function state(target: PullRequest): { head: string; reviews: Review[]; comments
       if (requestedAt === undefined) return { head: "c1", reviews: [], comments: [rateLimited(-40_000, "50 seconds")] };
       const request = comment("octocat", REQUEST_BODY, requestedAt);
       if (t < requestedAt + 2_500) return { head: "c1", reviews: [], comments: [rateLimited(-40_000, "50 seconds"), request] };
-      if (t < requestedAt + 9_000) {
+      if (t < requestedAt + 6_000) {
         const triggered = comment(BOT_LOGIN, "Action performed: Review triggered.", requestedAt + 2_000);
         return { head: "c1", reviews: [], comments: [inProgress(requestedAt + 2_000), request, triggered] };
       }
-      return { head: "c1", reviews: [review("c1", requestedAt + 9_000)], comments: [] };
+      return { head: "c1", reviews: [review("c1", requestedAt + 6_000)], comments: [] };
     }
     case 910:
       return { head: "d2", reviews: [review("d1", -900_000)], comments: [] };
+    case 921:
+      return t < 16_000
+        ? { head: "f1", reviews: [], comments: [inProgress(CHANGE_AT)] }
+        : { head: "f1", reviews: [review("f1", 15_500)], comments: [] };
     default:
       return { head: "e1", reviews: [review("e1", -1_200_000)], comments: [] };
   }
@@ -76,11 +89,11 @@ function state(target: PullRequest): { head: string; reviews: Review[]; comments
 const fakeGitHub: GitHub = {
   async listPullRequests() {
     await sleep(900);
-    return prs;
+    return elapsed() < CHANGE_AT ? prs : [...prs.filter((item) => item.number !== 910), lateArrival];
   },
   async fetchReviewState(target) {
     await sleep(300 + Math.random() * 700);
-    return state(target);
+    return { ...state(target), status: status(target) };
   },
   async requestReview(target) {
     await sleep(900);
@@ -93,7 +106,8 @@ const app = render(
   <App
     options={{ org: "acme", author: "@me", since: "2026-09-21", watch: true, dryRun: false }}
     gitHub={fakeGitHub}
-    timing={{ replyPollMs: 1_500, replyTimeoutMs: 30_000, watchPollMs: 3_000 }}
+    timing={{ replyPollMs: 1_500, replyTimeoutMs: 30_000, watchPollMs: 3_000, listRefreshMs: 4_000 }}
   />,
 );
+setTimeout(() => app.unmount(), DEMO_LENGTH_MS);
 await app.waitUntilExit();
