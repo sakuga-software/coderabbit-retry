@@ -142,7 +142,10 @@ export function App(props: AppProps) {
     // The CodeRabbit quota is shared by the whole org. Posts go one at a time, and each one
     // waits for the reply before the next: a new rate limit blocks all the other PRs too.
     function exclusive(task: () => Promise<void>): Promise<void> {
-      const run = postLock.then(task);
+      const run = postLock.then(() => {
+        signal.throwIfAborted();
+        return task();
+      });
       postLock = run.catch(() => {});
       return run;
     }
@@ -192,12 +195,19 @@ export function App(props: AppProps) {
     controls.current = {
       post: (pr, command) =>
         exclusive(async () => {
+          // The post can wait in the queue for minutes. The pull request can close in that time.
+          if (rowOf(pr).left) {
+            setFlash({ text: `Cannot post on ${keyOf(pr)}: this pull request is no longer open.`, color: "yellow" });
+            return;
+          }
           const posted = await post(pr, command);
           setFlash(
             posted
               ? { text: `Posted "${commandBody(command)}" on ${keyOf(pr)}.`, color: "green" }
               : { text: `Could not post on ${keyOf(pr)}.`, color: "red" },
           );
+        }).catch((error) => {
+          if (!signal.aborted) setFlash({ text: `Could not post on ${keyOf(pr)}: ${message(error)}`, color: "red" });
         }),
     };
 
