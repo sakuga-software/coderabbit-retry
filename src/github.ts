@@ -59,14 +59,29 @@ async function paginate<T>(path: string): Promise<T[]> {
   return pages.flat();
 }
 
+export type PullRequestStatus = "open" | "draft" | "merged" | "closed";
+
+interface PullSummary {
+  head: { sha: string };
+  state: "open" | "closed";
+  draft: boolean;
+  merged_at: string | null;
+}
+
+function statusOf(pull: PullSummary): PullRequestStatus {
+  if (pull.merged_at) return "merged";
+  if (pull.state === "closed") return "closed";
+  return pull.draft ? "draft" : "open";
+}
+
 export async function fetchReviewState(pr: PullRequest) {
   const base = `repos/${pr.repo}`;
-  const [head, reviews, comments] = await Promise.all([
-    gh(["api", `${base}/pulls/${pr.number}`, "--jq", ".head.sha"]).then((sha) => sha.trim()),
+  const [pull, reviews, comments] = await Promise.all([
+    gh(["api", `${base}/pulls/${pr.number}`, "--jq", "{head: {sha: .head.sha}, state, draft, merged_at}"]).then((output) => JSON.parse(output) as PullSummary),
     paginate<Review>(`${base}/pulls/${pr.number}/reviews`),
     paginate<Comment>(`${base}/issues/${pr.number}/comments`),
   ]);
-  return { head, reviews, comments };
+  return { head: pull.head.sha, status: statusOf(pull), reviews, comments };
 }
 
 export async function requestReview(pr: PullRequest): Promise<string> {

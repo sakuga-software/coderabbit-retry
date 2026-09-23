@@ -5,6 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { decide, type Decision } from "./decide.js";
 import * as github from "./github.js";
 import type { PullRequest } from "./github.js";
+import { planSync, type LeftStatus } from "./sync.js";
 
 export interface Options {
   org: string;
@@ -20,6 +21,7 @@ interface Row {
   activity?: "loading" | "posting";
   postedUrl?: string;
   error?: string;
+  left?: LeftStatus;
 }
 
 export type GitHub = Pick<typeof github, "listPullRequests" | "fetchReviewState" | "requestReview">;
@@ -28,9 +30,10 @@ export interface Timing {
   replyPollMs: number;
   replyTimeoutMs: number;
   watchPollMs: number;
+  listRefreshMs: number;
 }
 
-const DEFAULT_TIMING: Timing = { replyPollMs: 5_000, replyTimeoutMs: 90_000, watchPollMs: 30_000 };
+const DEFAULT_TIMING: Timing = { replyPollMs: 5_000, replyTimeoutMs: 90_000, watchPollMs: 30_000, listRefreshMs: 60_000 };
 const REPOST_GUARD_MS = 15 * 60_000;
 const BRAND = "#FF570A";
 
@@ -38,6 +41,7 @@ const keyOf = (pr: PullRequest) => `${pr.repo}#${pr.number}`;
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 function needsWatch(row: Row, dryRun: boolean): boolean {
+  if (row.left) return false;
   if (row.error) return true;
   switch (row.decision?.kind) {
     case "busy":
@@ -72,6 +76,7 @@ export function App(props: AppProps) {
   const [triggered, setTriggered] = useState(0);
   const [now, setNow] = useState(() => new Date());
   const [nextCheckAt, setNextCheckAt] = useState<Date>();
+  const [listError, setListError] = useState<string>();
   const rowsRef = useRef(new Map<string, Row>());
 
   useEffect(() => {
@@ -90,9 +95,13 @@ export function App(props: AppProps) {
     async function refresh(pr: PullRequest): Promise<Decision | undefined> {
       update(pr, { activity: "loading" });
       try {
-        const state = await gitHub.fetchReviewState(pr);
+        const { status, ...state } = await gitHub.fetchReviewState(pr);
+        if (status !== "open") {
+          update(pr, { left: status, activity: undefined, error: undefined });
+          return undefined;
+        }
         const decision = decide({ ...state, now: new Date() });
-        update(pr, { decision, activity: undefined, error: undefined });
+        update(pr, { decision, left: undefined, activity: undefined, error: undefined });
         return decision;
       } catch (error) {
         update(pr, { activity: undefined, error: message(error) });
@@ -115,7 +124,8 @@ export function App(props: AppProps) {
     async function triggerReady(prs: PullRequest[]) {
       if (options.dryRun) return;
       for (const pr of prs) {
-        if (rowOf(pr).decision?.kind !== "trigger") continue;
+        const row = rowOf(pr);
+        if (row.left || row.decision?.kind !== "trigger") continue;
         if (Date.now() < orgBlockedUntil) {
           update(pr, { decision: { kind: "wait", availableAt: new Date(orgBlockedUntil), delayGuessed: false } });
           continue;
@@ -145,28 +155,51 @@ export function App(props: AppProps) {
       return Math.max(1_000, Math.min(timing.watchPollMs, ...ends));
     }
 
-    async function run() {
-      const prs = await gitHub.listPullRequests(options);
-      for (const pr of prs) rowsRef.current.set(keyOf(pr), { pr, activity: "loading" });
-      setRows([...rowsRef.current.values()]);
+    const tracked = () => [...rowsRef.current.values()].map((row) => row.pr);
 
-      await Promise.all(prs.map(refresh));
-      await triggerReady(prs);
+    async function syncList() {
+      const listed = new Map((await gitHub.listPullRequests(options)).map((pr) => [keyOf(pr), pr]));
+      const plan = planSync(
+        [...rowsRef.current].map(([key, row]) => ({ key, left: row.left })),
+        [...listed.keys()],
+      );
+      const added = plan.added.map((key) => listed.get(key)!);
+      for (const pr of added) rowsRef.current.set(keyOf(pr), { pr, activity: "loading" });
+      setRows([...rowsRef.current.values()]);
+      await Promise.all([...added, ...plan.recheck.map((key) => rowsRef.current.get(key)!.pr)].map(refresh));
+    }
+
+    async function run() {
+      await syncList();
+      await triggerReady(tracked());
       if (!options.watch) return;
 
+      let listedAt = Date.now();
       while (true) {
-        const watched = prs.filter((pr) => needsWatch(rowOf(pr), options.dryRun));
+        const watched = tracked().filter((pr) => needsWatch(rowOf(pr), options.dryRun));
         if (watched.length === 0) return;
         const delay = nextDelay(watched);
         setNextCheckAt(new Date(Date.now() + delay));
         await sleep(delay, undefined, { signal });
         setNextCheckAt(undefined);
+
+        if (Date.now() - listedAt >= timing.listRefreshMs) {
+          listedAt = Date.now();
+          try {
+            await syncList();
+            setListError(undefined);
+          } catch (error) {
+            setListError(message(error));
+          }
+        }
+
         const due = watched.filter((pr) => {
-          const decision = rowOf(pr).decision;
-          return decision?.kind !== "wait" || decision.availableAt.getTime() <= Date.now();
+          const row = rowOf(pr);
+          if (row.left) return false;
+          return row.decision?.kind !== "wait" || row.decision.availableAt.getTime() <= Date.now();
         });
         await Promise.all(due.map(refresh));
-        await triggerReady(prs);
+        await triggerReady(tracked());
       }
     }
 
@@ -217,7 +250,15 @@ export function App(props: AppProps) {
       )}
       {fatal && <Text color="red">✖ {fatal}</Text>}
       {rows && rows.length > 0 && (
-        <Footer rows={rows} triggered={triggered} done={done} now={clock} nextCheckAt={nextCheckAt} options={options} />
+        <Footer
+          rows={rows}
+          triggered={triggered}
+          done={done}
+          now={clock}
+          nextCheckAt={nextCheckAt}
+          listError={listError}
+          options={options}
+        />
       )}
     </Box>
   );
@@ -247,6 +288,17 @@ interface View {
   detail: string;
 }
 
+const LEFT_VIEWS: Record<LeftStatus, View> = {
+  merged: { icon: <Text color="magenta">◆</Text>, label: "merged", color: "magenta", detail: "merged, no longer watched" },
+  closed: { icon: <Text color="red">○</Text>, label: "closed", color: "red", detail: "closed, no longer watched" },
+  draft: {
+    icon: <Text color="gray">◌</Text>,
+    label: "draft",
+    color: "gray",
+    detail: "back to draft, not watched until it is ready for review",
+  },
+};
+
 function describe(row: Row, now: Date, options: Options): View {
   const spinner = (color: string) => (
     <Text color={color}>
@@ -256,6 +308,7 @@ function describe(row: Row, now: Date, options: Options): View {
   if (row.activity === "posting") {
     return { icon: spinner("blue"), label: "retrying", color: "blue", detail: "posting \"@coderabbitai review\"…" };
   }
+  if (row.left) return LEFT_VIEWS[row.left];
   if (row.error) return { icon: <Text color="red">✖</Text>, label: "error", color: "red", detail: row.error };
 
   const decision = row.decision;
@@ -278,12 +331,12 @@ function describe(row: Row, now: Date, options: Options): View {
     case "wait": {
       const remaining = decision.availableAt.getTime() - now.getTime();
       const guess = decision.delayGuessed ? " · unreadable delay, 1 h assumed" : "";
-      const left = remaining > 0 ? `in ${formatDuration(remaining, options.watch)}` : "now, checking…";
+      const when = remaining > 0 ? `in ${formatDuration(remaining, options.watch)}` : "now, checking…";
       return {
         icon: <Text color="yellow">◷</Text>,
         label: "quota",
         color: "yellow",
-        detail: `quota back ${left} (at ${formatTime(decision.availableAt)})${guess}`,
+        detail: `quota back ${when} (at ${formatTime(decision.availableAt)})${guess}`,
       };
     }
     case "pending":
@@ -348,11 +401,14 @@ interface FooterProps {
   done: boolean;
   now: Date;
   nextCheckAt?: Date;
+  listError?: string;
   options: Options;
 }
 
-function Footer({ rows, triggered, done, now, nextCheckAt, options }: FooterProps) {
-  const count = (kind: Decision["kind"]) => rows.filter((row) => row.decision?.kind === kind).length;
+function Footer({ rows, triggered, done, now, nextCheckAt, listError, options }: FooterProps) {
+  const active = rows.filter((row) => !row.left);
+  const count = (kind: Decision["kind"]) => active.filter((row) => row.decision?.kind === kind).length;
+  const countLeft = (status: LeftStatus) => rows.filter((row) => row.left === status).length;
   const waiting = count("wait");
   const parts = [
     triggered > 0 && `${triggered} retried`,
@@ -361,6 +417,9 @@ function Footer({ rows, triggered, done, now, nextCheckAt, options }: FooterProp
     count("busy") > 0 && `${count("busy")} reviewing`,
     count("reviewed") > 0 && `${count("reviewed")} up to date`,
     count("idle") > 0 && `${count("idle")} with nothing to do`,
+    countLeft("merged") > 0 && `${countLeft("merged")} merged`,
+    countLeft("closed") > 0 && `${countLeft("closed")} closed`,
+    countLeft("draft") > 0 && `${countLeft("draft")} back to draft`,
   ].filter(Boolean);
 
   return (
@@ -373,6 +432,7 @@ function Footer({ rows, triggered, done, now, nextCheckAt, options }: FooterProp
           {" · Ctrl+C to quit"}
         </Text>
       )}
+      {listError && <Text color="red">The list refresh failed: {listError}</Text>}
       {!options.watch && done && waiting > 0 && (
         <Text dimColor>
           Tip: <Text color={BRAND}>coderabbit-retry --watch</Text> waits for the quota and retries by itself.
