@@ -14,10 +14,11 @@ const comment = (login: string, body: string, at: number, updatedAt = at): Comme
   created_at: iso(at),
   updated_at: iso(updatedAt),
 });
-const review = (commit: string, at: number): Review => ({
+const review = (commit: string, at: number, state = "APPROVED"): Review => ({
   user: { login: BOT_LOGIN },
   commit_id: commit,
   submitted_at: iso(at),
+  state,
 });
 
 const SUMMARY = "<!-- summarize by coderabbit.ai -->";
@@ -64,7 +65,7 @@ function state(target: PullRequest): ReviewState {
         ? { head: "a1", reviews: [], comments: [inProgress(-20_000)] }
         : { head: "a1", reviews: [review("a1", 6_500)], comments: [] };
     case 912:
-      return { head: "b1", reviews: [review("b1", -600_000)], comments: [] };
+      return { head: "b1", reviews: [review("b1", -600_000, "CHANGES_REQUESTED")], comments: [] };
     case 911: {
       if (requestedAt === undefined) return { head: "c1", reviews: [], comments: [rateLimited(-40_000, "50 seconds")] };
       const request = comment("octocat", REQUEST_BODY, requestedAt);
@@ -82,7 +83,7 @@ function state(target: PullRequest): ReviewState {
         ? { head: "f1", reviews: [], comments: [inProgress(CHANGE_AT)] }
         : { head: "f1", reviews: [review("f1", 15_500)], comments: [] };
     default:
-      return { head: "e1", reviews: [review("e1", -1_200_000)], comments: [] };
+      return { head: "e1", reviews: [review("e1", -1_200_000, "COMMENTED")], comments: [] };
   }
 }
 

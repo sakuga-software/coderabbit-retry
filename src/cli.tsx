@@ -22,8 +22,10 @@ const cli = meow(
         --version             Show the version
 
   States
-    up to date     CodeRabbit already reviewed the last commit, with a GitHub review
-                   or with a finished review of it in its summary
+    approved       CodeRabbit reviewed the last commit, and its last verdict approves
+    changes requested
+                   CodeRabbit reviewed the last commit, and its last verdict requests changes
+    reviewed       CodeRabbit reviewed the last commit, with comments only
     reviewing      the CodeRabbit summary shows a review in progress
     quota          the quota is not back; shows when it comes back
     requested      a bare "@coderabbitai review" of less than 15 min waits for a reply
@@ -35,6 +37,10 @@ const cli = meow(
     merged         the pull request is merged; the tool no longer watches it
     closed         the pull request is closed; the tool no longer watches it
     draft          the pull request is back to draft; watched again if it is ready
+
+  A commit counts as reviewed with a GitHub review on it, or with a finished
+  review of it in the CodeRabbit summary. The verdict is the last CodeRabbit
+  review that approves, requests changes or is dismissed, as on GitHub.
 
   The delay comes from the current version of the CodeRabbit comment: its
   "available in …" starts at its last edit. The quota is shared by the whole
