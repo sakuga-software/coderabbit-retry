@@ -2,6 +2,8 @@
 
 Relance `@coderabbitai review` sur tes PR ouvertes dont le quota CodeRabbit est revenu.
 
+![Démo de coderabbit-retry --watch sur des données simulées](docs/demo.gif)
+
 Quand le quota de l'org est épuisé, CodeRabbit remplace sa review par un
 « Review limit reached » avec un délai. Cet outil relit chaque PR, calcule
 l'heure de retour du quota et poste la commande quand elle est passée.
@@ -44,4 +46,14 @@ coderabbit-retry --help       # options et états
 pnpm dev -- --dry-run   # lance les sources avec tsx
 pnpm test               # tests de la logique de décision
 pnpm typecheck
+```
+
+## Démo
+
+Le GIF passe par la vraie interface et la vraie logique de décision, avec un faux
+GitHub (`demo/demo.tsx`) qui déroule une chronologie : une review en cours, un quota
+qui revient, une relance, puis la review. Pour le réenregistrer (vhs, ttyd et ffmpeg) :
+
+```sh
+demo/record.sh
 ```

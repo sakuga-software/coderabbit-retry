@@ -18,7 +18,8 @@
     "prepare": "pnpm build",
     "dev": "tsx src/cli.tsx",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/*.test.ts"
+    "test": "tsx --test src/*.test.ts",
+    "demo": "tsx --tsconfig demo/tsconfig.json demo/demo.tsx"
   },
   "dependencies": {
     "ink": "^7.1.1",

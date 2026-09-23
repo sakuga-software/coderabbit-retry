@@ -3,7 +3,8 @@ import Spinner from "ink-spinner";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { setTimeout as sleep } from "node:timers/promises";
 import { decide, type Decision } from "./decide.js";
-import { fetchReviewState, listPullRequests, requestReview, type PullRequest } from "./github.js";
+import * as github from "./github.js";
+import type { PullRequest } from "./github.js";
 
 export interface Options {
   org: string;
@@ -21,9 +22,15 @@ interface Row {
   error?: string;
 }
 
-const REPLY_POLL_MS = 5_000;
-const REPLY_TIMEOUT_MS = 90_000;
-const WATCH_POLL_MS = 30_000;
+export type GitHub = Pick<typeof github, "listPullRequests" | "fetchReviewState" | "requestReview">;
+
+export interface Timing {
+  replyPollMs: number;
+  replyTimeoutMs: number;
+  watchPollMs: number;
+}
+
+const DEFAULT_TIMING: Timing = { replyPollMs: 5_000, replyTimeoutMs: 90_000, watchPollMs: 30_000 };
 const REPOST_GUARD_MS = 15 * 60_000;
 const BRAND = "#FF570A";
 
@@ -44,7 +51,13 @@ function needsWatch(row: Row, dryRun: boolean): boolean {
   }
 }
 
-export function App({ options }: { options: Options }) {
+interface AppProps {
+  options: Options;
+  gitHub?: GitHub;
+  timing?: Timing;
+}
+
+export function App({ options, gitHub = github, timing = DEFAULT_TIMING }: AppProps) {
   const { exit } = useApp();
   const [rows, setRows] = useState<Row[] | null>(null);
   const [fatal, setFatal] = useState<string>();
@@ -70,7 +83,7 @@ export function App({ options }: { options: Options }) {
     async function refresh(pr: PullRequest): Promise<Decision | undefined> {
       update(pr, { activity: "loading" });
       try {
-        const state = await fetchReviewState(pr);
+        const state = await gitHub.fetchReviewState(pr);
         const decision = decide({ ...state, now: new Date() });
         update(pr, { decision, activity: undefined, error: undefined });
         return decision;
@@ -81,10 +94,10 @@ export function App({ options }: { options: Options }) {
     }
 
     async function waitForReply(pr: PullRequest): Promise<Decision | undefined> {
-      const deadline = Date.now() + REPLY_TIMEOUT_MS;
+      const deadline = Date.now() + timing.replyTimeoutMs;
       let decision: Decision | undefined;
       do {
-        await sleep(REPLY_POLL_MS, undefined, { signal });
+        await sleep(timing.replyPollMs, undefined, { signal });
         decision = await refresh(pr);
       } while (decision?.kind === "pending" && Date.now() < deadline);
       return decision;
@@ -104,7 +117,7 @@ export function App({ options }: { options: Options }) {
 
         update(pr, { activity: "posting" });
         try {
-          const url = await requestReview(pr);
+          const url = await gitHub.requestReview(pr);
           lastPostedAt.set(keyOf(pr), Date.now());
           update(pr, { activity: undefined, postedUrl: url });
           setTriggered((count) => count + 1);
@@ -122,11 +135,11 @@ export function App({ options }: { options: Options }) {
         .map((pr) => rowOf(pr).decision)
         .filter((decision) => decision?.kind === "wait")
         .map((decision) => decision.availableAt.getTime() + 2_000 - Date.now());
-      return Math.max(1_000, Math.min(WATCH_POLL_MS, ...ends));
+      return Math.max(1_000, Math.min(timing.watchPollMs, ...ends));
     }
 
     async function run() {
-      const prs = await listPullRequests(options);
+      const prs = await gitHub.listPullRequests(options);
       for (const pr of prs) rowsRef.current.set(keyOf(pr), { pr, activity: "loading" });
       setRows([...rowsRef.current.values()]);
 
