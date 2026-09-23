@@ -1,58 +1,60 @@
 # coderabbit-retry
 
-Relance `@coderabbitai review` sur tes PR ouvertes dont le quota CodeRabbit est revenu.
+Posts `@coderabbitai review` on your open pull requests after their CodeRabbit quota comes back.
 
-![Démo de coderabbit-retry --watch sur des données simulées](docs/demo.gif)
+![coderabbit-retry --watch on simulated data](docs/demo.gif)
 
-Quand le quota de l'org est épuisé, CodeRabbit remplace sa review par un
-« Review limit reached » avec un délai. Cet outil relit chaque PR, calcule
-l'heure de retour du quota et poste la commande quand elle est passée.
+When the review quota of an organization is used up, CodeRabbit posts "Review limit reached"
+with a delay instead of a review. This tool reads each pull request, calculates when the
+quota comes back, and posts the command after that time.
 
 ## Installation
 
 ```sh
-git clone git@github.com:sakuga-software/coderabbit-retry.git
+git clone https://github.com/sakuga-software/coderabbit-retry.git
 cd coderabbit-retry
-pnpm install          # build dist/ avec le script prepare
+pnpm install          # the prepare script builds dist/
 ln -sf "$PWD/dist/cli.js" ~/.local/bin/coderabbit-retry
 ```
 
-Prérequis : Node ≥ 22 et `gh` authentifié (`gh auth status`).
+Requires Node 22 or later and an authenticated `gh` (`gh auth status`).
 
 ## Usage
 
 ```sh
-coderabbit-retry              # relance ce qui peut l'être, puis quitte
-coderabbit-retry --watch      # reste ouvert et relance dès que le quota revient
-coderabbit-retry --dry-run    # affiche les décisions sans rien poster
-coderabbit-retry --help       # options et états
+coderabbit-retry                 # retry what can be retried, then quit
+coderabbit-retry --watch         # stay open and retry when the quota comes back
+coderabbit-retry --dry-run       # show the decisions, but post nothing
+coderabbit-retry --org my-org    # the default organization is sakuga-software
+coderabbit-retry --help          # options and states
 ```
 
-## Règles de décision
+## Decision rules
 
-- Le délai vient de la **version courante** du commentaire de CodeRabbit.
-  Son « available in … » part de sa dernière modification (`updated_at`).
-- Seul un commentaire `@coderabbitai review` **seul** compte comme une demande.
-  Avec du texte en plus, CodeRabbit le traite comme une discussion et ne lance pas de review.
-- Une demande sans réponse depuis plus de 15 min ne bloque plus la relance.
-- Un rate limit est levé si une review ou un « Review triggered » arrive après lui.
-- Si le délai est illisible, l'outil suppose 1 h.
-- Le quota est commun à l'org : les relances partent une par une, chacune après
-  la réponse de la précédente. Un nouveau rate limit met les autres PR en attente.
+- The delay comes from the **current version** of the CodeRabbit comment.
+  Its "available in …" starts at the last edit of the comment (`updated_at`).
+- Only a **bare** `@coderabbitai review` comment counts as a request.
+  If the comment has more text, CodeRabbit replies as a chat and starts no review.
+- If a request has no reply after 15 min, it no longer blocks a retry.
+- A review or a "Review triggered" reply after a rate limit lifts that rate limit.
+- If the delay is unreadable, the tool assumes 1 hour.
+- The quota is shared by the whole organization. The tool posts one request at a time,
+  after the reply to the previous one. A new rate limit puts the other pull requests on hold.
 
-## Développement
+## Development
 
 ```sh
-pnpm dev -- --dry-run   # lance les sources avec tsx
-pnpm test               # tests de la logique de décision
+pnpm dev -- --dry-run   # run the sources with tsx
+pnpm test               # tests of the decision logic
 pnpm typecheck
 ```
 
-## Démo
+## Demo
 
-Le GIF passe par la vraie interface et la vraie logique de décision, avec un faux
-GitHub (`demo/demo.tsx`) qui déroule une chronologie : une review en cours, un quota
-qui revient, une relance, puis la review. Pour le réenregistrer (vhs, ttyd et ffmpeg) :
+The GIF uses the real interface and the real decision logic with a fake GitHub
+(`demo/demo.tsx`). The fake GitHub plays a timeline: a review in progress, a quota
+that comes back, a retry, then the review. To see it live, run `pnpm demo`.
+To record the GIF again (requires vhs, ttyd and ffmpeg):
 
 ```sh
 demo/record.sh

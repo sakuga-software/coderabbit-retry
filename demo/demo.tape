@@ -1,4 +1,4 @@
-# Lancé par demo/record.sh, qui encode docs/demo.gif à partir des images.
+# demo/record.sh runs this tape, then encodes docs/demo.gif from the frames.
 Output demo/frames/
 
 Set Shell zsh

@@ -31,18 +31,18 @@ const rateLimited = (at: number, delay: string) =>
   );
 
 const pr = (repo: string, number: number, title: string): PullRequest => ({
-  repo: `sakuga-software/${repo}`,
+  repo: `acme/${repo}`,
   number,
   title,
-  url: `https://github.com/sakuga-software/${repo}/pull/${number}`,
+  url: `https://github.com/acme/${repo}/pull/${number}`,
 });
 
 const prs = [
-  pr("detectivebox-front", 517, "feat(infra): the migrations run before each deployment"),
-  pr("suricarte", 912, "fix(sync): a lock stamp always moves forward"),
-  pr("suricarte", 911, "feat(app): read a tooltip with a finger, by holding it"),
-  pr("suricarte", 910, "fix(stock): one sale, one deduction"),
-  pr("suricarte", 899, "feat(stock): a stale reading is no loss"),
+  pr("web", 517, "feat(checkout): pay with a saved card"),
+  pr("api", 912, "fix(auth): refresh the token before it expires"),
+  pr("mobile", 911, "feat(settings): a dark theme"),
+  pr("api", 910, "fix(orders): one refund per order"),
+  pr("web", 899, "docs: document the public API"),
 ];
 
 let requestedAt: number | undefined;
@@ -58,7 +58,7 @@ function state(target: PullRequest): { head: string; reviews: Review[]; comments
       return { head: "b1", reviews: [review("b1", -600_000)], comments: [] };
     case 911: {
       if (requestedAt === undefined) return { head: "c1", reviews: [], comments: [rateLimited(-40_000, "50 seconds")] };
-      const request = comment("Mheaus", REQUEST_BODY, requestedAt);
+      const request = comment("octocat", REQUEST_BODY, requestedAt);
       if (t < requestedAt + 2_500) return { head: "c1", reviews: [], comments: [rateLimited(-40_000, "50 seconds"), request] };
       if (t < requestedAt + 9_000) {
         const triggered = comment(BOT_LOGIN, "Action performed: Review triggered.", requestedAt + 2_000);
@@ -85,13 +85,13 @@ const fakeGitHub: GitHub = {
   async requestReview(target) {
     await sleep(900);
     requestedAt = elapsed();
-    return `${target.url}#issuecomment-5791865880`;
+    return `${target.url}#issuecomment-1234567890`;
   },
 };
 
 const app = render(
   <App
-    options={{ org: "sakuga-software", author: "@me", since: "2026-09-21", watch: true, dryRun: false }}
+    options={{ org: "acme", author: "@me", since: "2026-09-21", watch: true, dryRun: false }}
     gitHub={fakeGitHub}
     timing={{ replyPollMs: 1_500, replyTimeoutMs: 30_000, watchPollMs: 3_000 }}
   />,

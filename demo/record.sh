@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Enregistre docs/demo.gif sur des données simulées. Prérequis : vhs, ttyd, ffmpeg.
-# VHS 0.12 n'encode pas le GIF avec ffmpeg 9 : on garde ses images et on encode ici.
+# Records docs/demo.gif from simulated data. Requires vhs, ttyd and ffmpeg.
+# VHS 0.12 cannot encode a GIF with ffmpeg 9. The script keeps the VHS frames and encodes them here.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

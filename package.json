@@ -2,7 +2,7 @@
   "name": "coderabbit-retry",
   "version": "1.0.0",
   "private": true,
-  "description": "Relance @coderabbitai review sur les PR dont le quota CodeRabbit est revenu",
+  "description": "Posts @coderabbitai review on your pull requests after their CodeRabbit quota comes back",
   "type": "module",
   "bin": {
     "coderabbit-retry": "dist/cli.js"
