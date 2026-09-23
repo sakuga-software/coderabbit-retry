@@ -51,7 +51,7 @@ const cli = meow(
   command with no delay only dates the refusal. "N remain after this review"
   on a later review means the quota is back. If a refusal came after the time
   that the newest notice gave, the tool assumes 1 hour. It posts one request
-  at a time, after the reply to the previous one.
+  at a time, and polls for the reply to each one for about 90 s.
 
   With --watch, the tool searches the pull requests again once a minute. It
   adds the new ones, shows the ones that are merged, closed or back to draft,
@@ -68,9 +68,9 @@ const cli = meow(
     s               post "@coderabbitai resolve": resolve the threads
     h               hide or show the merged, closed and draft pull requests
     q               quit
-  Each post asks for a confirmation: y or Enter posts, n or Esc cancels. A click selects a row or presses
-  a button. The mouse mode takes over text selection: hold Shift or Option,
-  depending on the terminal, to select text.
+  Each post asks for a confirmation: y or Enter posts, n or Esc cancels. A
+  click selects a row or presses a button. The mouse mode takes over text
+  selection: hold Shift or Option, depending on the terminal, to select text.
 
   Examples
     $ coderabbit-retry
