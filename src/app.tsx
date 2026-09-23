@@ -120,6 +120,8 @@ export function App(props: AppProps) {
   const [confirmation, setConfirmation] = useState<Confirmation>();
   const [flash, setFlash] = useState<{ text: string; color: string }>();
   const [hideLeft, setHideLeft] = useState(false);
+  // Two keys in one input chunk share one render. The ref gives the second key the state that the first one set.
+  const hideLeftRef = useRef(false);
   const rowsRef = useRef(new Map<string, Row>());
   const controls = useRef<PostControls>(null);
   const rowNodes = useRef(new Map<string, DOMElement>());
@@ -309,13 +311,15 @@ export function App(props: AppProps) {
   const keys = shownRows.map((row) => keyOf(row.pr));
   const selection = reselect(allKeys, keys, selected);
   // Hiding a row, by h or by a refresh that closes it, moves the selection. Keep the move after the rows show again.
+  // A key press can change the selection before this effect runs. Keep that newer value.
   useEffect(() => {
-    if (selected !== selection) setSelected(selection);
+    if (selected !== selection) setSelected((current) => (current === selected ? selection : current));
   }, [selected, selection]);
   const hiddenCount = allKeys.length - keys.length;
 
   function toggleHidden() {
     const inactive = (rows ?? []).filter((row) => row.left).length;
+    hideLeftRef.current = !hideLeft;
     setHideLeft(!hideLeft);
     setFlash(
       hideLeft
@@ -374,7 +378,13 @@ export function App(props: AppProps) {
     if (action) request(action);
   }
 
-  const move = (step: number) => setSelected((previous) => moveSelection(keys, reselect(allKeys, keys, previous), step));
+  const move = (step: number) =>
+    setSelected((previous) => {
+      const all = [...rowsRef.current.values()];
+      const everyKey = all.map((row) => keyOf(row.pr));
+      const shownKeys = all.filter((row) => !hideLeftRef.current || !row.left).map((row) => keyOf(row.pr));
+      return moveSelection(shownKeys, reselect(everyKey, shownKeys, previous), step);
+    });
 
   useInput(
     (input, key) => {
