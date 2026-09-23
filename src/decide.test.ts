@@ -272,3 +272,21 @@ test("quotaSignals dates a free signal with no review by the creation of the sum
   const signals = quotaSignals("acme/api#2", [bot(FREE_SUMMARY(2), 9000, 10)], []);
   assert.deepEqual(signals, [{ kind: "free", pr: "acme/api#2", at: now.getTime() - 9_000_000 }]);
 });
+
+const threadReply = (commit: string, agoSeconds: number): Review => ({ ...botReview("COMMENTED", commit, agoSeconds), body: "" });
+
+test("a thread reply on the head is not a review of the head", () => {
+  const reviews = [botReview("CHANGES_REQUESTED", "old", 900), threadReply(HEAD, 60)];
+  assert.equal(run([summary("<!-- This is an auto-generated comment: rate limited by coderabbit.ai --> available in 13 minutes.", 30)], reviews).kind, "wait");
+});
+
+test("a thread reply after a rate limit does not lift it", () => {
+  assert.equal(run([bot("Review rate limited. available in 20 minutes.", 300)], [threadReply(HEAD, 60)]).kind, "wait");
+});
+
+test("quotaSignals dates a free signal by the last real review, not by a later thread reply", () => {
+  const reviews = [botReview("APPROVED", "x", 500), threadReply("x", 20)];
+  assert.deepEqual(quotaSignals("acme/api#2", [bot(FREE_SUMMARY(2), 9000, 10)], reviews), [
+    { kind: "free", pr: "acme/api#2", at: now.getTime() - 500_000 },
+  ]);
+});

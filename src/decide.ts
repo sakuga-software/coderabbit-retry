@@ -16,6 +16,7 @@ export interface Review {
   commit_id: string;
   submitted_at: string;
   state?: string;
+  body?: string;
 }
 
 export type Verdict = "approved" | "changes requested" | "commented";
@@ -105,6 +106,9 @@ export function reviewVerdict(botReviews: Review[]): Verdict {
 }
 
 const isBot = (item: { user: { login: string } | null }) => item.user?.login === BOT_LOGIN;
+// CodeRabbit answers in a review thread with a COMMENTED review that has an empty body. It is not a review.
+const isThreadReply = (review: Review) => review.state === "COMMENTED" && review.body === "";
+const botReviewsOf = (reviews: Review[]) => reviews.filter((review) => isBot(review) && !isThreadReply(review));
 const isRateLimit = (comment: Comment) =>
   /rate limited by coderabbit\.ai|Review rate limited/.test(comment.body);
 const isTriggerReply = (comment: Comment) =>
@@ -135,7 +139,7 @@ export function quotaSignals(pr: string, comments: Comment[], reviews: Review[])
   if (summary && remaining) {
     // A later edit moves the updated_at of the summary but can keep this line.
     // The review date, or else the creation of the summary, is earlier, thus safe.
-    const lastReview = reviews.filter(isBot).at(-1);
+    const lastReview = botReviewsOf(reviews).at(-1);
     const at = lastReview ? time(lastReview.submitted_at) : time(summary.created_at);
     signals.push(Number(remaining[1]) > 0 ? { kind: "free", pr, at } : { kind: "refusal", pr, at });
   }
@@ -165,7 +169,7 @@ function estimateQuota(limitAt: number, signals: QuotaSignal[]): QuotaEstimate {
 }
 
 export function decide({ head, reviews, comments, now, pr = "this", quota }: PullRequestState): Decision {
-  const botReviews = reviews.filter(isBot);
+  const botReviews = botReviewsOf(reviews);
   const botComments = comments.filter(isBot);
 
   const reviewed = { kind: "reviewed", verdict: reviewVerdict(botReviews) } as const;
