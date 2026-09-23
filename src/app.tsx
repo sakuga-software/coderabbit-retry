@@ -3,7 +3,7 @@ import Spinner from "ink-spinner";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ACTIONS, actionForKey, commandBody, moveSelection, refusal, reselect, type Action, type Command } from "./actions.js";
-import { BOT_LOGIN, decide, quotaSignals, type Comment, type Decision, type QuotaSource, type Review, type Verdict } from "./decide.js";
+import { BOT_LOGIN, decide, quotaScope, quotaSignals, type Comment, type Decision, type QuotaSignal, type QuotaSource, type Review, type Verdict } from "./decide.js";
 import * as github from "./github.js";
 import type { PullRequest } from "./github.js";
 import { createMouseParser, DISABLE_MOUSE, ENABLE_MOUSE, isMouseFragment } from "./mouse.js";
@@ -155,15 +155,21 @@ export function App(props: AppProps) {
       return run;
     }
 
-    // The quota belongs to the developer, so every row reads the quota signals of all the rows.
-    // A new fetch on one row can thus change the decision of the others, with no API call.
+    // The quota belongs to the developer, so every row reads the quota signals of the rows in the
+    // same quota scope (see quotaScope). A new fetch on one row can thus change the decision of the
+    // others, with no API call.
     function redecide() {
       const now = new Date();
-      const quota = [...rowsRef.current].flatMap(([key, row]) =>
-        row.fetched ? quotaSignals(key, row.fetched.comments, row.fetched.reviews) : [],
-      );
+      const scopeOf = (row: Row) => quotaScope(row.pr.repo, row.fetched?.comments ?? [], row.fetched?.reviews ?? []);
+      const signalsByScope = new Map<string, QuotaSignal[]>();
+      for (const [key, row] of rowsRef.current) {
+        if (!row.fetched) continue;
+        const scope = scopeOf(row);
+        signalsByScope.set(scope, [...(signalsByScope.get(scope) ?? []), ...quotaSignals(key, row.fetched.comments, row.fetched.reviews)]);
+      }
       for (const [key, row] of rowsRef.current) {
         if (!row.fetched || row.left) continue;
+        const quota = signalsByScope.get(scopeOf(row)) ?? [];
         rowsRef.current.set(key, { ...row, decision: decide({ ...row.fetched, now, pr: key, quota }) });
       }
       setRows([...rowsRef.current.values()]);

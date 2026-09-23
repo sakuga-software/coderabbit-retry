@@ -48,8 +48,10 @@ coderabbit-retry --help          # options and states
   If the comment has more text, CodeRabbit replies as a chat and starts no review.
 - If a request has no reply after 15 min, it no longer blocks a retry.
 - A review or a "Review triggered" reply after a rate limit lifts that rate limit.
-- The quota belongs to the developer (the pull request author), on a rolling window. The tool
-  reads one quota clock from the CodeRabbit comments of all the listed pull requests:
+- The quota belongs to the developer (the pull request author), on a rolling window. On the
+  CodeRabbit "Open source" plan, it is also scoped per repository: the tool reads the "Plan:" line
+  of the CodeRabbit comments and keeps such a repository on its own clock. The tool reads one
+  quota clock from the CodeRabbit comments of all the listed pull requests in the same scope:
   - a notice with a delay ("Next included review available in …", in the first CodeRabbit
     comment, which CodeRabbit edits at each rate limit) gives the time when the quota comes back.
     The tool adds 30 s: CodeRabbit rounds its delays, and a request 4 s after the time can be refused;

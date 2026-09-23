@@ -148,6 +148,17 @@ export function quotaSignals(pr: string, comments: Comment[], reviews: Review[])
   return signals;
 }
 
+/**
+ * Returns the scope of the quota clock of a pull request. The quota belongs to the developer, and
+ * the Open source plan of CodeRabbit also scopes it per repository. The plan comes from the
+ * "Plan:" line of the last CodeRabbit comment or review that has one.
+ */
+export function quotaScope(repo: string, comments: Comment[], reviews: Review[]): string {
+  const bodies = [...comments.filter(isBot), ...reviews.filter(isBot)].map((item) => item.body ?? "");
+  const plan = bodies.map((body) => /\*\*Plan\*\*:\s*([^\n*]+)/.exec(body)?.[1]?.trim()).findLast(Boolean);
+  return plan && /^open source$/i.test(plan) ? repo : "developer";
+}
+
 type QuotaEstimate =
   | { free: true; availableAt: number; source: QuotaSignal }
   | { free: false; availableAt: number; guessed: boolean; source?: QuotaSignal };

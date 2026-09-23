@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { BOT_LOGIN, decide, parseDelay, quotaSignals, type Comment, type QuotaSignal, type Review } from "./decide.js";
+import { BOT_LOGIN, decide, parseDelay, quotaScope, quotaSignals, type Comment, type QuotaSignal, type Review } from "./decide.js";
 
 const now = new Date("2026-09-23T09:00:00Z");
 const ago = (seconds: number) => new Date(now.getTime() - seconds * 1000).toISOString();
@@ -296,4 +296,20 @@ test("a delay notice keeps a margin, because CodeRabbit rounds its delays", () =
   const decision = run([bot(summaryLimit, 26 * 60 - 4)]);
   assert.equal(decision.kind, "wait");
   assert.equal(run([bot(summaryLimit, 26 * 60 + 31)]).kind, "trigger");
+});
+
+test("an Open source plan keeps the quota of a repository to that repository", () => {
+  const oss = bot("<!-- summarize by coderabbit.ai -->\n> **Plan**: Open source\n", 600);
+  assert.equal(quotaScope("acme/lib", [oss], []), "acme/lib");
+});
+
+test("a paid plan, or no plan line, shares the quota across the repositories of the developer", () => {
+  const paid = bot("<!-- summarize by coderabbit.ai -->\n> **Plan**: Advanced\n", 600);
+  assert.equal(quotaScope("acme/web", [paid], []), "developer");
+  assert.equal(quotaScope("acme/web", [me("hello", 60)], []), "developer");
+});
+
+test("the plan line of a review body counts too", () => {
+  const review: Review = { ...botReview("APPROVED"), body: "**Plan**: Open source" };
+  assert.equal(quotaScope("acme/lib", [], [review]), "acme/lib");
 });
