@@ -17,11 +17,13 @@ Show
 Type "coderabbit-retry --watch"
 Sleep 600ms
 Enter
-Sleep 20s
-Down@400ms 5
-Sleep 1s
+Sleep 19s
+Type "h"
+Sleep 1.2s
+Down@400ms 4
+Sleep 0.8s
 Type "a"
-Sleep 1.5s
-Type "y"
+Sleep 1.2s
+Enter
 Sleep 4s
 Sleep 3s

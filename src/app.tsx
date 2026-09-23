@@ -2,7 +2,7 @@ import { Box, Text, useApp, useInput, useStdin, useStdout, useWindowSize, type D
 import Spinner from "ink-spinner";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { setTimeout as sleep } from "node:timers/promises";
-import { ACTIONS, actionForKey, commandBody, moveSelection, refusal, type Action, type Command } from "./actions.js";
+import { ACTIONS, actionForKey, commandBody, moveSelection, refusal, reselect, type Action, type Command } from "./actions.js";
 import { decide, type Decision } from "./decide.js";
 import * as github from "./github.js";
 import type { PullRequest } from "./github.js";
@@ -119,6 +119,7 @@ export function App(props: AppProps) {
   const [selected, setSelected] = useState<string>();
   const [confirmation, setConfirmation] = useState<Confirmation>();
   const [flash, setFlash] = useState<{ text: string; color: string }>();
+  const [hideLeft, setHideLeft] = useState(false);
   const rowsRef = useRef(new Map<string, Row>());
   const controls = useRef<PostControls>(null);
   const rowNodes = useRef(new Map<string, DOMElement>());
@@ -303,9 +304,27 @@ export function App(props: AppProps) {
     if (done) exit(fatal ? new Error(fatal) : undefined);
   }, [done]);
 
-  const keys = rows?.map((row) => keyOf(row.pr)) ?? [];
+  const allKeys = rows?.map((row) => keyOf(row.pr)) ?? [];
+  const shownRows = hideLeft ? (rows ?? []).filter((row) => !row.left) : (rows ?? []);
+  const keys = shownRows.map((row) => keyOf(row.pr));
+  const selection = reselect(allKeys, keys, selected);
+  const hiddenCount = allKeys.length - keys.length;
 
-  function request(action: Action, key = selected) {
+  function toggleHidden() {
+    const inactive = (rows ?? []).filter((row) => row.left).length;
+    if (!hideLeft) {
+      const activeKeys = (rows ?? []).filter((row) => !row.left).map((row) => keyOf(row.pr));
+      setSelected(reselect(allKeys, activeKeys, selection));
+    }
+    setHideLeft(!hideLeft);
+    setFlash(
+      hideLeft
+        ? { text: "Showing all the pull requests.", color: "gray" }
+        : { text: `Hiding ${inactive} merged, closed or draft pull request${inactive === 1 ? "" : "s"}.`, color: "gray" },
+    );
+  }
+
+  function request(action: Action, key = selection) {
     const row = key ? rowsRef.current.get(key) : undefined;
     if (!row || !key) return;
     const refused = refusal(action, { left: row.left !== undefined, dryRun: options.dryRun });
@@ -350,17 +369,18 @@ export function App(props: AppProps) {
   function press(id: string) {
     if (id === "yes" || id === "no") return answer(id === "yes");
     if (confirmation) return;
+    if (id === "h") return toggleHidden();
     const action = actionForKey(id);
     if (action) request(action);
   }
 
-  const move = (step: number) => setSelected((current) => moveSelection(keys, current, step));
+  const move = (step: number) => setSelected((previous) => moveSelection(keys, reselect(allKeys, keys, previous), step));
 
   useInput(
     (input, key) => {
       if (isMouseFragment(input)) return;
       if (confirmation) {
-        if (input === "y") answer(true);
+        if (input === "y" || key.return) answer(true);
         else if (input === "n" || key.escape) answer(false);
         return;
       }
@@ -398,11 +418,10 @@ export function App(props: AppProps) {
   }, []);
 
   const clock = options.watch ? now : new Date();
-  const selectedIndex = selected ? keys.indexOf(selected) : 0;
-  const range =
-    options.interactive && rows
-      ? visibleRange(rows.map(rowHeight), selectedIndex, Math.max(3, screenRows - CHROME_LINES), scrollStart.current)
-      : { start: 0, end: rows?.length ?? 0 };
+  const selectedIndex = selection ? keys.indexOf(selection) : 0;
+  const range = options.interactive
+    ? visibleRange(shownRows.map(rowHeight), selectedIndex, Math.max(3, screenRows - CHROME_LINES), scrollStart.current)
+    : { start: 0, end: shownRows.length };
   scrollStart.current = range.start;
 
   const registerRow = (key: string) => (node: DOMElement | null) => {
@@ -435,18 +454,23 @@ export function App(props: AppProps) {
           {options.interactive && (
             <Text dimColor>{range.start > 0 ? `  ↑ ${range.start} more` : " "}</Text>
           )}
-          {rows.slice(range.start, range.end).map((row) => (
+          {shownRows.length === 0 && (
+            <Text dimColor>
+              All {rows.length} pull requests are hidden. Press h to show them.
+            </Text>
+          )}
+          {shownRows.slice(range.start, range.end).map((row) => (
             <RowView
               key={keyOf(row.pr)}
               ref={registerRow(keyOf(row.pr))}
               row={row}
               now={clock}
               options={options}
-              selected={options.interactive && keyOf(row.pr) === selected}
+              selected={options.interactive && keyOf(row.pr) === selection}
             />
           ))}
           {options.interactive && (
-            <Text dimColor>{range.end < rows.length ? `  ↓ ${rows.length - range.end} more` : " "}</Text>
+            <Text dimColor>{range.end < shownRows.length ? `  ↓ ${shownRows.length - range.end} more` : " "}</Text>
           )}
         </Box>
       )}
@@ -468,6 +492,8 @@ export function App(props: AppProps) {
           flash={flash}
           registerButton={registerButton}
           disabledCommands={options.dryRun}
+          hideLeft={hideLeft}
+          hiddenCount={hiddenCount}
         />
       )}
     </Box>
@@ -683,6 +709,8 @@ interface ControlsProps {
   flash?: { text: string; color: string };
   registerButton: (id: string) => (node: DOMElement | null) => void;
   disabledCommands: boolean;
+  hideLeft: boolean;
+  hiddenCount: number;
 }
 
 function Button({ id, hotkey, label, dim, register }: { id: string; hotkey: string; label: string; dim?: boolean; register: ControlsProps["registerButton"] }) {
@@ -698,7 +726,7 @@ function Button({ id, hotkey, label, dim, register }: { id: string; hotkey: stri
   );
 }
 
-function Controls({ confirmation, flash, registerButton, disabledCommands }: ControlsProps) {
+function Controls({ confirmation, flash, registerButton, disabledCommands, hideLeft, hiddenCount }: ControlsProps) {
   return (
     <Box flexDirection="column" marginTop={1}>
       {confirmation ? (
@@ -708,8 +736,8 @@ function Controls({ confirmation, flash, registerButton, disabledCommands }: Con
               Post <Text bold>"{commandBody(confirmation.action.command!)}"</Text> on{" "}
               <Text bold>{confirmation.key}</Text>?{"  "}
             </Text>
-            <Button id="yes" hotkey="y" label="yes" register={registerButton} />
-            <Button id="no" hotkey="n" label="no" register={registerButton} />
+            <Button id="yes" hotkey="y / ⏎" label="yes" register={registerButton} />
+            <Button id="no" hotkey="n / esc" label="no" register={registerButton} />
           </Box>
           <Text color="yellow" wrap="truncate-end">
             {confirmation.warning ?? " "}
@@ -728,6 +756,12 @@ function Controls({ confirmation, flash, registerButton, disabledCommands }: Con
                 register={registerButton}
               />
             ))}
+            <Button
+              id="h"
+              hotkey="h"
+              label={hideLeft ? `show ${hiddenCount} hidden` : "hide inactive"}
+              register={registerButton}
+            />
             <Text dimColor>↑↓ select · q quit</Text>
           </Box>
           <Text color={flash?.color} wrap="truncate-end">

@@ -48,8 +48,9 @@ const cli = meow(
     f               post "@coderabbitai full review"
     a               post "@coderabbitai approve": resolve the threads, then approve
     s               post "@coderabbitai resolve": resolve the threads
+    h               hide or show the merged, closed and draft pull requests
     q               quit
-  Each post asks for a confirmation (y or n). A click selects a row or presses
+  Each post asks for a confirmation: y or Enter posts, n or Esc cancels. A click selects a row or presses
   a button. The mouse mode takes over text selection: hold Shift or Option,
   depending on the terminal, to select text.
 
