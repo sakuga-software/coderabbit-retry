@@ -13,7 +13,7 @@ const comment = (login: string, body: string, createdAgo: number, updatedAgo = c
 });
 const bot = (body: string, createdAgo: number, updatedAgo?: number) =>
   comment(BOT_LOGIN, body, createdAgo, updatedAgo);
-const me = (body: string, createdAgo: number) => comment("Mheaus", body, createdAgo);
+const me = (body: string, createdAgo: number) => comment("octocat", body, createdAgo);
 
 const summaryLimit =
   "<!-- summarize by coderabbit.ai --> <!-- rate limited by coderabbit.ai --> **Next included review available in 26 minutes.**";

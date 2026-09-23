@@ -2,7 +2,7 @@
   "name": "coderabbit-retry",
   "version": "1.0.0",
   "private": true,
-  "description": "Relance @coderabbitai review sur les PR dont le quota CodeRabbit est revenu",
+  "description": "Posts @coderabbitai review on your pull requests after their CodeRabbit quota comes back",
   "type": "module",
   "bin": {
     "coderabbit-retry": "dist/cli.js"
@@ -18,7 +18,8 @@
     "prepare": "pnpm build",
     "dev": "tsx src/cli.tsx",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/*.test.ts"
+    "test": "tsx --test src/*.test.ts",
+    "demo": "tsx --tsconfig demo/tsconfig.json demo/demo.tsx"
   },
   "dependencies": {
     "ink": "^7.1.1",

@@ -7,39 +7,39 @@ const DEFAULT_ORG = "sakuga-software";
 
 const cli = meow(
   `
-  Relance « @coderabbitai review » sur tes PR ouvertes dont le quota CodeRabbit est revenu.
+  Posts "@coderabbitai review" on your open pull requests after their CodeRabbit quota comes back.
 
   Usage
     $ coderabbit-retry [options]
 
   Options
-    -s, --since <AAAA-MM-JJ>  PR créées depuis cette date      (défaut : lundi de cette semaine)
-    -o, --org <org>           Organisation GitHub               (défaut : ${DEFAULT_ORG})
-    -a, --author <login>      Auteur des PR                     (défaut : @me)
-    -w, --watch               Reste ouvert et relance chaque PR dès que son quota revient
-    -n, --dry-run             Affiche les décisions sans poster de commentaire
-    -h, --help                Affiche cette aide
-        --version             Affiche la version
+    -s, --since <YYYY-MM-DD>  Pull requests created on or after this date   (default: Monday of this week)
+    -o, --org <org>           GitHub organization                           (default: ${DEFAULT_ORG})
+    -a, --author <login>      Pull request author                           (default: @me)
+    -w, --watch               Stay open and retry each pull request when its quota comes back
+    -n, --dry-run             Show the decisions, but post no comment
+    -h, --help                Show this help
+        --version             Show the version
 
-  États
-    à jour        CodeRabbit a déjà reviewé le dernier commit
-    en cours      le résumé de CodeRabbit affiche une review en cours
-    quota         le quota n'est pas revenu ; affiche l'heure de retour
-    demandée      un « @coderabbitai review » seul, de moins de 15 min, attend sa réponse
-    rien à faire  dernier commit non reviewé, mais sans rate limit actif
-    à relancer    le quota est revenu : poste « @coderabbitai review » seul
+  States
+    up to date     CodeRabbit already reviewed the last commit
+    reviewing      the CodeRabbit summary shows a review in progress
+    quota          the quota is not back; shows when it comes back
+    requested      a bare "@coderabbitai review" of less than 15 min waits for a reply
+    nothing to do  the last commit has no review, but no rate limit is active
+    to retry       the quota is back: posts a bare "@coderabbitai review"
 
-  Le délai vient de la version courante du commentaire de CodeRabbit : son
-  « available in … » part de sa dernière modification. Le quota est commun
-  à l'org, donc les relances partent une par une, chacune après la réponse
-  de la précédente.
+  The delay comes from the current version of the CodeRabbit comment: its
+  "available in …" starts at its last edit. The quota is shared by the whole
+  organization, so the tool posts one request at a time, after the reply to
+  the previous one.
 
-  Exemples
+  Examples
     $ coderabbit-retry
     $ coderabbit-retry --watch
     $ coderabbit-retry --dry-run --since 2026-09-15
 
-  Prérequis : gh authentifié (gh auth status).
+  Requires an authenticated gh (gh auth status).
 `,
   {
     importMeta: import.meta,
@@ -65,7 +65,7 @@ function mondayOfThisWeek(): string {
 
 const since = cli.flags.since ?? mondayOfThisWeek();
 if (!/^\d{4}-\d{2}-\d{2}$/.test(since) || Number.isNaN(Date.parse(since))) {
-  console.error(`--since attend une date AAAA-MM-JJ, reçu « ${since} ».`);
+  console.error(`--since expects a YYYY-MM-DD date, got "${since}".`);
   process.exit(2);
 }
 

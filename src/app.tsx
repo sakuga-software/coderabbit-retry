@@ -3,7 +3,8 @@ import Spinner from "ink-spinner";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { setTimeout as sleep } from "node:timers/promises";
 import { decide, type Decision } from "./decide.js";
-import { fetchReviewState, listPullRequests, requestReview, type PullRequest } from "./github.js";
+import * as github from "./github.js";
+import type { PullRequest } from "./github.js";
 
 export interface Options {
   org: string;
@@ -21,9 +22,15 @@ interface Row {
   error?: string;
 }
 
-const REPLY_POLL_MS = 5_000;
-const REPLY_TIMEOUT_MS = 90_000;
-const WATCH_POLL_MS = 30_000;
+export type GitHub = Pick<typeof github, "listPullRequests" | "fetchReviewState" | "requestReview">;
+
+export interface Timing {
+  replyPollMs: number;
+  replyTimeoutMs: number;
+  watchPollMs: number;
+}
+
+const DEFAULT_TIMING: Timing = { replyPollMs: 5_000, replyTimeoutMs: 90_000, watchPollMs: 30_000 };
 const REPOST_GUARD_MS = 15 * 60_000;
 const BRAND = "#FF570A";
 
@@ -44,7 +51,20 @@ function needsWatch(row: Row, dryRun: boolean): boolean {
   }
 }
 
-export function App({ options }: { options: Options }) {
+interface AppProps {
+  options: Options;
+  gitHub?: GitHub;
+  timing?: Timing;
+}
+
+export function App(props: AppProps) {
+  // The workflow posts comments. If a new prop restarts it, it posts again and loses its repost guard.
+  // Thus the component keeps the props of its first render.
+  const [{ options, gitHub, timing }] = useState(() => ({
+    options: props.options,
+    gitHub: props.gitHub ?? github,
+    timing: props.timing ?? DEFAULT_TIMING,
+  }));
   const { exit } = useApp();
   const [rows, setRows] = useState<Row[] | null>(null);
   const [fatal, setFatal] = useState<string>();
@@ -70,7 +90,7 @@ export function App({ options }: { options: Options }) {
     async function refresh(pr: PullRequest): Promise<Decision | undefined> {
       update(pr, { activity: "loading" });
       try {
-        const state = await fetchReviewState(pr);
+        const state = await gitHub.fetchReviewState(pr);
         const decision = decide({ ...state, now: new Date() });
         update(pr, { decision, activity: undefined, error: undefined });
         return decision;
@@ -81,10 +101,10 @@ export function App({ options }: { options: Options }) {
     }
 
     async function waitForReply(pr: PullRequest): Promise<Decision | undefined> {
-      const deadline = Date.now() + REPLY_TIMEOUT_MS;
+      const deadline = Date.now() + timing.replyTimeoutMs;
       let decision: Decision | undefined;
       do {
-        await sleep(REPLY_POLL_MS, undefined, { signal });
+        await sleep(Math.min(timing.replyPollMs, Math.max(0, deadline - Date.now())), undefined, { signal });
         decision = await refresh(pr);
       } while (decision?.kind === "pending" && Date.now() < deadline);
       return decision;
@@ -104,7 +124,7 @@ export function App({ options }: { options: Options }) {
 
         update(pr, { activity: "posting" });
         try {
-          const url = await requestReview(pr);
+          const url = await gitHub.requestReview(pr);
           lastPostedAt.set(keyOf(pr), Date.now());
           update(pr, { activity: undefined, postedUrl: url });
           setTriggered((count) => count + 1);
@@ -122,11 +142,11 @@ export function App({ options }: { options: Options }) {
         .map((pr) => rowOf(pr).decision)
         .filter((decision) => decision?.kind === "wait")
         .map((decision) => decision.availableAt.getTime() + 2_000 - Date.now());
-      return Math.max(1_000, Math.min(WATCH_POLL_MS, ...ends));
+      return Math.max(1_000, Math.min(timing.watchPollMs, ...ends));
     }
 
     async function run() {
-      const prs = await listPullRequests(options);
+      const prs = await gitHub.listPullRequests(options);
       for (const pr of prs) rowsRef.current.set(keyOf(pr), { pr, activity: "loading" });
       setRows([...rowsRef.current.values()]);
 
@@ -180,12 +200,12 @@ export function App({ options }: { options: Options }) {
           <Text color="cyan">
             <Spinner type="dots" />
           </Text>{" "}
-          Recherche des PR…
+          Searching pull requests…
         </Text>
       )}
       {rows?.length === 0 && (
         <Text dimColor>
-          Aucune PR ouverte de {options.author} sur {options.org} depuis le {formatDay(options.since)}.
+          No open pull request by {options.author} in {options.org} since {formatDay(options.since)}.
         </Text>
       )}
       {rows && rows.length > 0 && (
@@ -214,7 +234,7 @@ function Header({ options }: { options: Options }) {
         {options.dryRun && <Text color="yellow"> [dry-run]</Text>}
       </Text>
       <Text dimColor>
-        PR ouvertes de {options.author} sur {options.org} depuis le {formatDay(options.since)}
+        Open pull requests by {options.author} in {options.org} since {formatDay(options.since)}
       </Text>
     </Box>
   );
@@ -234,52 +254,52 @@ function describe(row: Row, now: Date, options: Options): View {
     </Text>
   );
   if (row.activity === "posting") {
-    return { icon: spinner("blue"), label: "relance", color: "blue", detail: "envoi de « @coderabbitai review »…" };
+    return { icon: spinner("blue"), label: "retrying", color: "blue", detail: "posting \"@coderabbitai review\"…" };
   }
-  if (row.error) return { icon: <Text color="red">✖</Text>, label: "erreur", color: "red", detail: row.error };
+  if (row.error) return { icon: <Text color="red">✖</Text>, label: "error", color: "red", detail: row.error };
 
   const decision = row.decision;
-  if (!decision) return { icon: spinner("gray"), label: "analyse", color: "gray", detail: "lecture des reviews…" };
+  if (!decision) return { icon: spinner("gray"), label: "checking", color: "gray", detail: "reading the reviews…" };
 
   switch (decision.kind) {
     case "reviewed":
-      return { icon: <Text color="green">✔</Text>, label: "à jour", color: "green", detail: "dernier commit déjà reviewé" };
+      return { icon: <Text color="green">✔</Text>, label: "up to date", color: "green", detail: "the last commit is already reviewed" };
     case "busy":
-      return { icon: spinner("cyan"), label: "en cours", color: "cyan", detail: "CodeRabbit review la PR" };
+      return { icon: spinner("cyan"), label: "reviewing", color: "cyan", detail: "CodeRabbit is reviewing the pull request" };
     case "idle":
       return {
         icon: <Text color="gray">·</Text>,
-        label: "rien à faire",
+        label: "nothing to do",
         color: "gray",
         detail: decision.limitLifted
-          ? "rate limit levé, mais dernier commit non reviewé"
-          : "pas de rate limit, dernier commit non reviewé",
+          ? "rate limit lifted, but the last commit has no review"
+          : "no rate limit, but the last commit has no review",
       };
     case "wait": {
       const remaining = decision.availableAt.getTime() - now.getTime();
-      const guess = decision.delayGuessed ? " · délai illisible, 1 h supposée" : "";
-      const left = remaining > 0 ? `dans ${formatDuration(remaining, options.watch)}` : "maintenant, vérification…";
+      const guess = decision.delayGuessed ? " · unreadable delay, 1 h assumed" : "";
+      const left = remaining > 0 ? `in ${formatDuration(remaining, options.watch)}` : "now, checking…";
       return {
         icon: <Text color="yellow">◷</Text>,
         label: "quota",
         color: "yellow",
-        detail: `quota de retour ${left} (à ${formatTime(decision.availableAt)})${guess}`,
+        detail: `quota back ${left} (at ${formatTime(decision.availableAt)})${guess}`,
       };
     }
     case "pending":
       return {
         icon: spinner("magenta"),
-        label: "demandée",
+        label: "requested",
         color: "magenta",
-        detail: `demande de ${formatTime(decision.requestedAt)} sans réponse de CodeRabbit`,
+        detail: `request of ${formatTime(decision.requestedAt)} has no reply from CodeRabbit`,
       };
     case "trigger": {
       const since = formatDuration(now.getTime() - decision.availableAt.getTime(), false);
       return {
         icon: <Text color="blue">↻</Text>,
-        label: "à relancer",
+        label: "to retry",
         color: "blue",
-        detail: `quota revenu depuis ${since}${options.dryRun ? " · dry-run, rien posté" : ""}`,
+        detail: `quota back for ${since}${options.dryRun ? " · dry run, nothing posted" : ""}`,
       };
     }
   }
@@ -294,7 +314,7 @@ function RowView({ row, now, options }: { row: Row; now: Date; options: Options 
         <Box width={3} flexShrink={0}>
           {view.icon}
         </Box>
-        <Box width={14} flexShrink={0}>
+        <Box width={16} flexShrink={0}>
           <Text color={view.color} bold>
             {view.label}
           </Text>
@@ -306,15 +326,15 @@ function RowView({ row, now, options }: { row: Row; now: Date; options: Options 
         </Box>
         <Text wrap="truncate-end">{row.pr.title}</Text>
       </Box>
-      <Box paddingLeft={17}>
+      <Box paddingLeft={19}>
         <Text dimColor wrap="truncate-end">
           {view.detail}
         </Text>
       </Box>
       {row.postedUrl && (
-        <Box paddingLeft={17}>
+        <Box paddingLeft={19}>
           <Text color="green" wrap="truncate-end">
-            ↻ relancée → {row.postedUrl}
+            ↻ retried → {row.postedUrl}
           </Text>
         </Box>
       )}
@@ -335,27 +355,27 @@ function Footer({ rows, triggered, done, now, nextCheckAt, options }: FooterProp
   const count = (kind: Decision["kind"]) => rows.filter((row) => row.decision?.kind === kind).length;
   const waiting = count("wait");
   const parts = [
-    triggered > 0 && `${triggered} relancée${triggered > 1 ? "s" : ""}`,
-    count("trigger") > 0 && `${count("trigger")} à relancer`,
-    waiting > 0 && `${waiting} en attente de quota`,
-    count("busy") > 0 && `${count("busy")} en cours`,
-    count("reviewed") > 0 && `${count("reviewed")} à jour`,
-    count("idle") > 0 && `${count("idle")} sans action`,
+    triggered > 0 && `${triggered} retried`,
+    count("trigger") > 0 && `${count("trigger")} to retry`,
+    waiting > 0 && `${waiting} waiting for quota`,
+    count("busy") > 0 && `${count("busy")} reviewing`,
+    count("reviewed") > 0 && `${count("reviewed")} up to date`,
+    count("idle") > 0 && `${count("idle")} with nothing to do`,
   ].filter(Boolean);
 
   return (
     <Box flexDirection="column">
-      <Text>{parts.length > 0 ? parts.join(" · ") : "Aucune action."}</Text>
+      <Text>{parts.length > 0 ? parts.join(" · ") : "Nothing to do."}</Text>
       {options.watch && !done && (
         <Text dimColor>
-          Surveillance active
-          {nextCheckAt ? ` · prochaine vérification dans ${formatDuration(nextCheckAt.getTime() - now.getTime(), true)}` : " · vérification…"}
-          {" · Ctrl+C pour quitter"}
+          Watching
+          {nextCheckAt ? ` · next check in ${formatDuration(nextCheckAt.getTime() - now.getTime(), true)}` : " · checking…"}
+          {" · Ctrl+C to quit"}
         </Text>
       )}
       {!options.watch && done && waiting > 0 && (
         <Text dimColor>
-          Astuce : <Text color={BRAND}>coderabbit-retry --watch</Text> attend le retour du quota et relance tout seul.
+          Tip: <Text color={BRAND}>coderabbit-retry --watch</Text> waits for the quota and retries by itself.
         </Text>
       )}
     </Box>
@@ -375,9 +395,9 @@ function formatDuration(ms: number, precise: boolean): string {
 }
 
 function formatTime(date: Date): string {
-  return date.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 }
 
 function formatDay(day: string): string {
-  return new Date(`${day}T00:00:00`).toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
+  return new Date(`${day}T00:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 }
