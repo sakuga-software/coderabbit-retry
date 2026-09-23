@@ -35,9 +35,9 @@ coderabbit-retry --help          # options and states
   says that a finished review covered it (`final_review_risk_coverage`). An incremental review
   with no new finding often submits no GitHub review.
 - A reviewed pull request shows the verdict of CodeRabbit: `approved`, `changes requested`, or
-  `reviewed` for comments only. As on GitHub, the verdict is the last CodeRabbit review that
-  approves, requests changes or is dismissed. A later comment review, such as a reply in a thread,
-  does not replace it.
+  `reviewed` when no verdict stands (comments only, or a dismissed verdict). As on GitHub, the
+  verdict is the last CodeRabbit review that approves, requests changes or is dismissed. A later
+  comment review, such as a reply in a thread, does not replace it.
 - A summary that says "Review skipped" (a bot author, a draft) gives the state `skipped`
   with the reason. "Reviews paused" gives `paused`. The tool retries neither by itself:
   CodeRabbit chose not to review. Press `r` to ask once.

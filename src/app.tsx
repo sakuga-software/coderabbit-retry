@@ -610,7 +610,7 @@ const REVIEWED_VIEWS: Record<Verdict, View> = {
     icon: <Text color="cyan">✔</Text>,
     label: "reviewed",
     color: "cyan",
-    detail: "the last commit is reviewed, with comments only",
+    detail: "the last commit is reviewed, with no verdict (comments only or dismissed)",
   },
 };
 
@@ -788,7 +788,7 @@ function Footer({ rows, triggered, done, now, nextCheckAt, listError, options }:
     count("busy") > 0 && `${count("busy")} reviewing`,
     verdicts("approved") > 0 && `${verdicts("approved")} approved`,
     verdicts("changes requested") > 0 && `${verdicts("changes requested")} with changes requested`,
-    verdicts("commented") > 0 && `${verdicts("commented")} reviewed with comments`,
+    verdicts("commented") > 0 && `${verdicts("commented")} reviewed with no verdict`,
     count("idle") > 0 && `${count("idle")} with nothing to do`,
     count("skipped") > 0 && `${count("skipped")} skipped`,
     count("paused") > 0 && `${count("paused")} paused`,

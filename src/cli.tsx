@@ -25,7 +25,8 @@ const cli = meow(
     approved       CodeRabbit reviewed the last commit, and its last verdict approves
     changes requested
                    CodeRabbit reviewed the last commit, and its last verdict requests changes
-    reviewed       CodeRabbit reviewed the last commit, with comments only
+    reviewed       CodeRabbit reviewed the last commit, with no verdict: comments only,
+                   or a dismissed verdict
     reviewing      the CodeRabbit summary shows a review in progress
     quota          the quota is not back; shows when it comes back
     requested      a bare "@coderabbitai review" of less than 15 min waits for a reply
