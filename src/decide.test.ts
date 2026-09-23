@@ -101,3 +101,19 @@ test("parseDelay reads seconds", () => {
   assert.equal(parseDelay("available in 44 seconds."), 44_000);
   assert.equal(parseDelay("no delay here"), null);
 });
+
+test("a resolve reply after the rate limit does not lift it", () => {
+  const decision = run([
+    bot(summaryLimit, 600),
+    bot("<details><summary>✅ Action performed</summary>\n\nComments resolved.\n\n</details>", 300),
+  ]);
+  assert.equal(decision.kind, "wait");
+});
+
+test("a finished full review after the rate limit lifts it", () => {
+  const decision = run([
+    bot("Review rate limited. available in 2 minutes.", 900),
+    bot("<details><summary>✅ Action performed</summary>\n\nFull review finished.\n\n</details>", 300),
+  ]);
+  assert.deepEqual(decision, { kind: "idle", limitLifted: true });
+});

@@ -95,19 +95,22 @@ const fakeGitHub: GitHub = {
     await sleep(300 + Math.random() * 700);
     return { ...state(target), status: status(target) };
   },
-  async requestReview(target) {
+  async postCommand(target, command) {
     await sleep(900);
-    requestedAt = elapsed();
-    return `${target.url}#issuecomment-1234567890`;
+    if (command === "review") requestedAt = elapsed();
+    return `${target.url}#issuecomment-${1234567890 + target.number}`;
   },
+  async openInBrowser() {},
 };
 
+const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 const app = render(
   <App
-    options={{ org: "acme", author: "@me", since: "2026-09-21", watch: true, dryRun: false }}
+    options={{ org: "acme", author: "@me", since: "2026-09-21", watch: true, dryRun: false, interactive }}
     gitHub={fakeGitHub}
     timing={{ replyPollMs: 1_500, replyTimeoutMs: 30_000, watchPollMs: 3_000, listRefreshMs: 4_000 }}
   />,
+  { alternateScreen: interactive },
 );
 setTimeout(() => app.unmount(), DEMO_LENGTH_MS);
 await app.waitUntilExit();

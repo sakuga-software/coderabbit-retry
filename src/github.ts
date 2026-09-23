@@ -1,6 +1,7 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { REQUEST_BODY, type Comment, type Review } from "./decide.js";
+import { commandBody, type Command } from "./actions.js";
+import type { Comment, Review } from "./decide.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -84,7 +85,19 @@ export async function fetchReviewState(pr: PullRequest) {
   return { head: pull.head.sha, status: statusOf(pull), reviews, comments };
 }
 
-export async function requestReview(pr: PullRequest): Promise<string> {
-  const url = await gh(["pr", "comment", String(pr.number), "--repo", pr.repo, "--body", REQUEST_BODY]);
+export async function postCommand(pr: PullRequest, command: Command): Promise<string> {
+  const url = await gh(["pr", "comment", String(pr.number), "--repo", pr.repo, "--body", commandBody(command)]);
   return url.trim();
+}
+
+export function openInBrowser(url: string): Promise<void> {
+  const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
+  return new Promise((resolve, reject) => {
+    const child = spawn(opener, [url], { stdio: "ignore", detached: true });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
 }
