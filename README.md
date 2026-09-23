@@ -51,7 +51,8 @@ coderabbit-retry --help          # options and states
 - The quota belongs to the developer (the pull request author), on a rolling window. The tool
   reads one quota clock from the CodeRabbit comments of all the listed pull requests:
   - a notice with a delay ("Next included review available in …", in the first CodeRabbit
-    comment, which CodeRabbit edits at each rate limit) gives the time when the quota comes back;
+    comment, which CodeRabbit edits at each rate limit) gives the time when the quota comes back.
+    The tool adds 30 s: CodeRabbit rounds its delays, and a request 4 s after the time can be refused;
   - a refused command with no delay ("Review rate limited.") only dates the refusal;
   - "N remain after this review" on a settled summary, after the refusal, means the quota is back.
     The tool dates it by the review, because a later edit of the summary can keep the line.

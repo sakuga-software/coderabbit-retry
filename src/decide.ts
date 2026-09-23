@@ -3,6 +3,8 @@ export const REQUEST_BODY = "@coderabbitai review";
 
 const UNREADABLE_DELAY_MS = 60 * 60_000;
 const REQUEST_TIMEOUT_MS = 15 * 60_000;
+// CodeRabbit rounds its delays ("13 minutes", "1 minute"). A request at the exact time can come early and be refused.
+const QUOTA_MARGIN_MS = 30_000;
 
 export interface Comment {
   user: { login: string } | null;
@@ -132,7 +134,7 @@ export function quotaSignals(pr: string, comments: Comment[], reviews: Review[])
   const signals: QuotaSignal[] = botComments.filter(isRateLimit).map((comment) => {
     const at = time(comment.updated_at);
     const delay = parseDelay(comment.body);
-    return delay === null ? { kind: "refusal", pr, at } : { kind: "limit", pr, at, availableAt: at + delay };
+    return delay === null ? { kind: "refusal", pr, at } : { kind: "limit", pr, at, availableAt: at + delay + QUOTA_MARGIN_MS };
   });
   const summary = botComments.findLast(isSummary);
   const remaining = summary && !NOT_SETTLED.test(summary.body) ? REMAINING.exec(summary.body) : null;

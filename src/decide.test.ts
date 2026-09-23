@@ -23,7 +23,7 @@ const run = (comments: Comment[], reviews: Review[] = []) => decide({ head: "abc
 test("the summary delay counts from its updated_at", () => {
   assert.deepEqual(run([bot(summaryLimit, 600)]), {
     kind: "wait",
-    availableAt: new Date(now.getTime() + 16 * 60_000),
+    availableAt: new Date(now.getTime() + 16 * 60_000 + 30_000),
     delayGuessed: false,
   });
 });
@@ -51,7 +51,7 @@ test("a delay in hours and minutes", () => {
   ]);
   assert.deepEqual(decision, {
     kind: "wait",
-    availableAt: new Date(now.getTime() + 64 * 60_000),
+    availableAt: new Date(now.getTime() + 64 * 60_000 + 30_000),
     delayGuessed: false,
   });
 });
@@ -210,7 +210,7 @@ const decideWith = (comments: Comment[], quota?: QuotaSignal[]) =>
 
 test("a refused command with no delay keeps the delay of the summary", () => {
   const decision = decideWith([bot(LIMIT_SUMMARY, 9000, 20), bot(REFUSED_REPLY, 10)]);
-  assert.deepEqual(decision, { kind: "wait", availableAt: new Date(now.getTime() + 14_000), delayGuessed: false });
+  assert.deepEqual(decision, { kind: "wait", availableAt: new Date(now.getTime() + 44_000), delayGuessed: false });
 });
 
 test("a refusal after the time that the summary gave falls back to a guess", () => {
@@ -223,7 +223,7 @@ test("a newer notice on another pull request of the developer gives the time", (
   const quota = [...quotaSignals("acme/web#1", own, []), ...quotaSignals("acme/api#2", [bot(LIMIT_SUMMARY, 9000, 20)], [])];
   assert.deepEqual(decideWith(own, quota), {
     kind: "wait",
-    availableAt: new Date(now.getTime() + 14_000),
+    availableAt: new Date(now.getTime() + 44_000),
     delayGuessed: false,
     source: { pr: "acme/api#2", at: new Date(now.getTime() - 20_000) },
   });
@@ -253,7 +253,7 @@ test("quotaSignals dates a free signal by the review, not by a later edit of the
 
 test("quotaSignals ignores the remaining count of a summary that is not settled, and reads zero as a refusal", () => {
   assert.deepEqual(quotaSignals("p", [bot(`${LIMIT_SUMMARY} 2 remain after this review.`, 9000, 10)], []), [
-    { kind: "limit", pr: "p", at: now.getTime() - 10_000, availableAt: now.getTime() + 24_000 },
+    { kind: "limit", pr: "p", at: now.getTime() - 10_000, availableAt: now.getTime() + 54_000 },
   ]);
   assert.deepEqual(quotaSignals("p", [bot(FREE_SUMMARY(0), 9000, 10)], []), [{ kind: "refusal", pr: "p", at: now.getTime() - 9_000_000 }]);
 });
@@ -289,4 +289,11 @@ test("quotaSignals dates a free signal by the last real review, not by a later t
   assert.deepEqual(quotaSignals("acme/api#2", [bot(FREE_SUMMARY(2), 9000, 10)], reviews), [
     { kind: "free", pr: "acme/api#2", at: now.getTime() - 500_000 },
   ]);
+});
+
+test("a delay notice keeps a margin, because CodeRabbit rounds its delays", () => {
+  // On coderabbit-retry#7, a request 4 s after "available in 13 minutes" was refused with "available in 17 seconds".
+  const decision = run([bot(summaryLimit, 26 * 60 - 4)]);
+  assert.equal(decision.kind, "wait");
+  assert.equal(run([bot(summaryLimit, 26 * 60 + 31)]).kind, "trigger");
 });
