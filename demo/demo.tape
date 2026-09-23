@@ -17,5 +17,5 @@ Show
 Type "coderabbit-retry --watch"
 Sleep 600ms
 Enter
-Sleep 31s
+Sleep 28s
 Sleep 3s

@@ -177,7 +177,6 @@ export function App(props: AppProps) {
       let listedAt = Date.now();
       while (true) {
         const watched = tracked().filter((pr) => needsWatch(rowOf(pr), options.dryRun));
-        if (watched.length === 0) return;
         const delay = nextDelay(watched);
         setNextCheckAt(new Date(Date.now() + delay));
         await sleep(delay, undefined, { signal });

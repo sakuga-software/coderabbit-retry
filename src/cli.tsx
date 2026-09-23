@@ -16,7 +16,7 @@ const cli = meow(
     -s, --since <YYYY-MM-DD>  Pull requests created on or after this date   (default: Monday of this week)
     -o, --org <org>           GitHub organization                           (default: ${DEFAULT_ORG})
     -a, --author <login>      Pull request author                           (default: @me)
-    -w, --watch               Stay open and retry each pull request when its quota comes back
+    -w, --watch               Stay open until Ctrl+C: retry each pull request when its quota comes back
     -n, --dry-run             Show the decisions, but post no comment
     -h, --help                Show this help
         --version             Show the version

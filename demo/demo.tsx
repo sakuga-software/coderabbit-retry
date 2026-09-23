@@ -46,6 +46,7 @@ const prs = [
 ];
 const lateArrival = pr("web", 921, "feat(search): filter the results by date");
 const CHANGE_AT = 8_000;
+const DEMO_LENGTH_MS = 32_000;
 
 let requestedAt: number | undefined;
 
@@ -68,11 +69,11 @@ function state(target: PullRequest): ReviewState {
       if (requestedAt === undefined) return { head: "c1", reviews: [], comments: [rateLimited(-40_000, "50 seconds")] };
       const request = comment("octocat", REQUEST_BODY, requestedAt);
       if (t < requestedAt + 2_500) return { head: "c1", reviews: [], comments: [rateLimited(-40_000, "50 seconds"), request] };
-      if (t < requestedAt + 9_000) {
+      if (t < requestedAt + 6_000) {
         const triggered = comment(BOT_LOGIN, "Action performed: Review triggered.", requestedAt + 2_000);
         return { head: "c1", reviews: [], comments: [inProgress(requestedAt + 2_000), request, triggered] };
       }
-      return { head: "c1", reviews: [review("c1", requestedAt + 9_000)], comments: [] };
+      return { head: "c1", reviews: [review("c1", requestedAt + 6_000)], comments: [] };
     }
     case 910:
       return { head: "d2", reviews: [review("d1", -900_000)], comments: [] };
@@ -108,4 +109,5 @@ const app = render(
     timing={{ replyPollMs: 1_500, replyTimeoutMs: 30_000, watchPollMs: 3_000, listRefreshMs: 4_000 }}
   />,
 );
+setTimeout(() => app.unmount(), DEMO_LENGTH_MS);
 await app.waitUntilExit();

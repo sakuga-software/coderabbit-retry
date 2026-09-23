@@ -23,7 +23,7 @@ Requires Node 22 or later and an authenticated `gh` (`gh auth status`).
 
 ```sh
 coderabbit-retry                 # retry what can be retried, then quit
-coderabbit-retry --watch         # stay open and retry when the quota comes back
+coderabbit-retry --watch         # stay open until Ctrl+C, and retry when the quota comes back
 coderabbit-retry --dry-run       # show the decisions, but post nothing
 coderabbit-retry --org my-org    # the default organization is sakuga-software
 coderabbit-retry --help          # options and states
