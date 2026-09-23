@@ -4,7 +4,7 @@ Output demo/frames/
 Set Shell zsh
 Set FontSize 16
 Set Width 1180
-Set Height 640
+Set Height 760
 Set Theme "Catppuccin Mocha"
 Set TypingSpeed 45ms
 
@@ -17,5 +17,5 @@ Show
 Type "coderabbit-retry --watch"
 Sleep 600ms
 Enter
-Sleep 28s
+Sleep 31s
 Sleep 3s
