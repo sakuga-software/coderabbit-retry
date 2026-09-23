@@ -3,7 +3,7 @@ import Spinner from "ink-spinner";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ACTIONS, actionForKey, commandBody, moveSelection, refusal, reselect, type Action, type Command } from "./actions.js";
-import { decide, type Decision } from "./decide.js";
+import { decide, type Decision, type Verdict } from "./decide.js";
 import * as github from "./github.js";
 import type { PullRequest } from "./github.js";
 import { createMouseParser, DISABLE_MOUSE, ENABLE_MOUSE, isMouseFragment } from "./mouse.js";
@@ -593,6 +593,27 @@ interface View {
   detail: string;
 }
 
+const REVIEWED_VIEWS: Record<Verdict, View> = {
+  approved: {
+    icon: <Text color="green">✔</Text>,
+    label: "approved",
+    color: "green",
+    detail: "the last commit is reviewed, and CodeRabbit approves",
+  },
+  "changes requested": {
+    icon: <Text color="red">✎</Text>,
+    label: "changes requested",
+    color: "red",
+    detail: "the last commit is reviewed, and CodeRabbit requests changes",
+  },
+  commented: {
+    icon: <Text color="cyan">✔</Text>,
+    label: "reviewed",
+    color: "cyan",
+    detail: "the last commit is reviewed, with no verdict (comments only or dismissed)",
+  },
+};
+
 const LEFT_VIEWS: Record<LeftStatus, View> = {
   merged: { icon: <Text color="magenta">◆</Text>, label: "merged", color: "magenta", detail: "merged, no longer watched" },
   closed: { icon: <Text color="red">○</Text>, label: "closed", color: "red", detail: "closed, no longer watched" },
@@ -627,7 +648,7 @@ function describe(row: Row, now: Date, options: Options): View {
 
   switch (decision.kind) {
     case "reviewed":
-      return { icon: <Text color="green">✔</Text>, label: "up to date", color: "green", detail: "the last commit is already reviewed" };
+      return REVIEWED_VIEWS[decision.verdict];
     case "busy":
       return { icon: spinner("cyan"), label: "reviewing", color: "cyan", detail: "CodeRabbit is reviewing the pull request" };
     case "idle":
@@ -701,7 +722,7 @@ interface RowViewProps {
 function RowView({ ref, row, now, options, selected }: RowViewProps) {
   const view = describe(row, now, options);
   const name = row.pr.repo.startsWith(`${options.org}/`) ? row.pr.repo.slice(options.org.length + 1) : row.pr.repo;
-  const indent = options.interactive ? 21 : 19;
+  const indent = options.interactive ? 24 : 22;
   return (
     <Box ref={ref} flexDirection="column" marginBottom={1}>
       <Box>
@@ -715,7 +736,7 @@ function RowView({ ref, row, now, options, selected }: RowViewProps) {
         <Box width={3} flexShrink={0}>
           {view.icon}
         </Box>
-        <Box width={16} flexShrink={0}>
+        <Box width={19} flexShrink={0}>
           <Text color={view.color} bold>
             {view.label}
           </Text>
@@ -756,6 +777,8 @@ interface FooterProps {
 function Footer({ rows, triggered, done, now, nextCheckAt, listError, options }: FooterProps) {
   const active = rows.filter((row) => !row.left);
   const count = (kind: Decision["kind"]) => active.filter((row) => row.decision?.kind === kind).length;
+  const verdicts = (verdict: Verdict) =>
+    active.filter((row) => row.decision?.kind === "reviewed" && row.decision.verdict === verdict).length;
   const countLeft = (status: LeftStatus) => rows.filter((row) => row.left === status).length;
   const waiting = count("wait");
   const parts = [
@@ -763,7 +786,9 @@ function Footer({ rows, triggered, done, now, nextCheckAt, listError, options }:
     count("trigger") > 0 && `${count("trigger")} to retry`,
     waiting > 0 && `${waiting} waiting for quota`,
     count("busy") > 0 && `${count("busy")} reviewing`,
-    count("reviewed") > 0 && `${count("reviewed")} up to date`,
+    verdicts("approved") > 0 && `${verdicts("approved")} approved`,
+    verdicts("changes requested") > 0 && `${verdicts("changes requested")} with changes requested`,
+    verdicts("commented") > 0 && `${verdicts("commented")} reviewed with no verdict`,
     count("idle") > 0 && `${count("idle")} with nothing to do`,
     count("skipped") > 0 && `${count("skipped")} skipped`,
     count("paused") > 0 && `${count("paused")} paused`,

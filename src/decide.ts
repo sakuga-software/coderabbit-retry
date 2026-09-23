@@ -15,10 +15,13 @@ export interface Review {
   user: { login: string } | null;
   commit_id: string;
   submitted_at: string;
+  state?: string;
 }
 
+export type Verdict = "approved" | "changes requested" | "commented";
+
 export type Decision =
-  | { kind: "reviewed" }
+  | { kind: "reviewed"; verdict: Verdict }
   | { kind: "busy" }
   | { kind: "idle"; limitLifted: boolean }
   | { kind: "wait"; availableAt: Date; delayGuessed: boolean }
@@ -75,6 +78,17 @@ export function skipReason(summary: string): string | null {
   return reason.trim().replace(/\.$/, "") || "no reason given";
 }
 
+/**
+ * Returns the verdict of the CodeRabbit reviews, with the rule of GitHub: the last review that
+ * approves, requests changes or is dismissed counts. A comment review does not replace a verdict.
+ */
+export function reviewVerdict(botReviews: Review[]): Verdict {
+  const last = botReviews.findLast((review) => ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(review.state ?? ""));
+  if (last?.state === "APPROVED") return "approved";
+  if (last?.state === "CHANGES_REQUESTED") return "changes requested";
+  return "commented";
+}
+
 const isBot = (item: { user: { login: string } | null }) => item.user?.login === BOT_LOGIN;
 const isRateLimit = (comment: Comment) =>
   /rate limited by coderabbit\.ai|Review rate limited/.test(comment.body);
@@ -88,14 +102,15 @@ export function decide({ head, reviews, comments, now }: PullRequestState): Deci
   const botReviews = reviews.filter(isBot);
   const botComments = comments.filter(isBot);
 
-  if (botReviews.some((review) => review.commit_id === head)) return { kind: "reviewed" };
+  const reviewed = { kind: "reviewed", verdict: reviewVerdict(botReviews) } as const;
+  if (botReviews.some((review) => review.commit_id === head)) return reviewed;
 
   // CodeRabbit rewrites its summary comment at each state change. Only the current body is
   // valid, and its updated_at is the start of the "available in …" delay.
   const summary = botComments.findLast((comment) => comment.body.includes("summarize by coderabbit.ai"));
   if (summary?.body.includes("review in progress by coderabbit.ai")) return { kind: "busy" };
 
-  if (summary && coveredCommit(summary.body) === head) return { kind: "reviewed" };
+  if (summary && coveredCommit(summary.body) === head) return reviewed;
 
   const limited = rateLimitDecision(comments, botComments, botReviews, now);
   if (limited) return limited;

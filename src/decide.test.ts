@@ -169,3 +169,30 @@ test("the skip reason ignores the headings before the notice", () => {
   const body = "## Walkthrough\n\nSome text.\n<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n> ## Review skipped\n> \n> Bot user detected.";
   assert.deepEqual(run([summary(body)]), { kind: "skipped", reason: "Bot user detected" });
 });
+
+const botReview = (state: string, commit = HEAD, agoSeconds = 100): Review => ({
+  user: { login: BOT_LOGIN },
+  commit_id: commit,
+  submitted_at: ago(agoSeconds),
+  state,
+});
+
+test("the last approval gives approved, and later comment reviews do not change it", () => {
+  const reviews = [botReview("CHANGES_REQUESTED", "old", 900), botReview("APPROVED", HEAD, 600), botReview("COMMENTED", HEAD, 300)];
+  assert.deepEqual(run([], reviews), { kind: "reviewed", verdict: "approved" });
+});
+
+test("changes requested after an approval give changes requested", () => {
+  const reviews = [botReview("APPROVED", "old", 900), botReview("CHANGES_REQUESTED", HEAD, 300)];
+  assert.deepEqual(run([], reviews), { kind: "reviewed", verdict: "changes requested" });
+});
+
+test("a head covered by the summary keeps the verdict of an older review", () => {
+  const reviews = [botReview("CHANGES_REQUESTED", "old", 900)];
+  assert.deepEqual(run([summary(coverage(HEAD))], reviews), { kind: "reviewed", verdict: "changes requested" });
+});
+
+test("only comment reviews give commented, and a dismissed review clears the verdict", () => {
+  assert.deepEqual(run([], [botReview("COMMENTED")]), { kind: "reviewed", verdict: "commented" });
+  assert.deepEqual(run([], [botReview("CHANGES_REQUESTED", HEAD, 600), botReview("DISMISSED", HEAD, 300)]), { kind: "reviewed", verdict: "commented" });
+});
