@@ -427,11 +427,12 @@ export function App(props: AppProps) {
       if (key.downArrow) return confirmationRef.current ? undefined : move(1);
       if (key.return) return typeKey("\r");
       if (key.escape) return typeKey("\u001B");
-      // A paste must not answer a prompt that it opened itself: the rest of the chunk stops there.
-      const hadPrompt = confirmationRef.current !== undefined;
+      // A paste must answer at most one prompt, and never a prompt that it opened itself.
+      // The rest of the chunk stops when a key opens or closes a prompt.
       for (const char of input) {
+        const hadPrompt = confirmationRef.current !== undefined;
         typeKey(char);
-        if (!hadPrompt && confirmationRef.current) break;
+        if (hadPrompt !== (confirmationRef.current !== undefined)) break;
       }
     },
     { isActive: options.interactive },
