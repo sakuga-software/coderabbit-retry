@@ -3,7 +3,7 @@ import Spinner from "ink-spinner";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ACTIONS, actionForKey, commandBody, moveSelection, refusal, reselect, type Action, type Command } from "./actions.js";
-import { decide, type Decision, type Verdict } from "./decide.js";
+import { botReplied, decide, quotaScope, quotaSignals, type Comment, type Decision, type QuotaSignal, type QuotaSource, type Review, type Verdict } from "./decide.js";
 import * as github from "./github.js";
 import type { PullRequest } from "./github.js";
 import { createMouseParser, DISABLE_MOUSE, ENABLE_MOUSE, isMouseFragment } from "./mouse.js";
@@ -26,6 +26,7 @@ interface Row {
   posted?: { command: Command; url: string };
   error?: string;
   left?: LeftStatus;
+  fetched?: { head: string; reviews: Review[]; comments: Comment[] };
 }
 
 export type GitHub = Pick<typeof github, "listPullRequests" | "fetchReviewState" | "postCommand" | "openInBrowser">;
@@ -133,8 +134,7 @@ export function App(props: AppProps) {
   useEffect(() => {
     const abort = new AbortController();
     const { signal } = abort;
-    const lastPostedAt = new Map<string, number>();
-    let orgBlockedUntil = 0;
+    const lastPosts = new Map<string, { at: number; before: Comment[] }>();
     let postLock = Promise.resolve();
 
     const update = (pr: PullRequest, patch: Partial<Row>) => {
@@ -155,6 +155,26 @@ export function App(props: AppProps) {
       return run;
     }
 
+    // The quota belongs to the developer, so every row reads the quota signals of the rows in the
+    // same quota scope (see quotaScope). A new fetch on one row can thus change the decision of the
+    // others, with no API call.
+    function redecide() {
+      const now = new Date();
+      const scopeOf = (row: Row) => quotaScope(row.pr.repo, row.fetched?.comments ?? [], row.fetched?.reviews ?? []);
+      const signalsByScope = new Map<string, QuotaSignal[]>();
+      for (const [key, row] of rowsRef.current) {
+        if (!row.fetched) continue;
+        const scope = scopeOf(row);
+        signalsByScope.set(scope, [...(signalsByScope.get(scope) ?? []), ...quotaSignals(key, row.fetched.comments, row.fetched.reviews)]);
+      }
+      for (const [key, row] of rowsRef.current) {
+        if (!row.fetched || row.left) continue;
+        const quota = signalsByScope.get(scopeOf(row)) ?? [];
+        rowsRef.current.set(key, { ...row, decision: decide({ ...row.fetched, now, pr: key, quota }) });
+      }
+      setRows([...rowsRef.current.values()]);
+    }
+
     async function refresh(pr: PullRequest): Promise<Decision | undefined> {
       update(pr, { activity: "loading" });
       try {
@@ -163,9 +183,9 @@ export function App(props: AppProps) {
           update(pr, { left: status, activity: undefined, error: undefined });
           return undefined;
         }
-        const decision = decide({ ...state, now: new Date() });
-        update(pr, { decision, left: undefined, activity: undefined, error: undefined });
-        return decision;
+        update(pr, { fetched: state, left: undefined, activity: undefined, error: undefined });
+        redecide();
+        return rowOf(pr).decision;
       } catch (error) {
         update(pr, { activity: undefined, error: message(error) });
         return undefined;
@@ -183,17 +203,18 @@ export function App(props: AppProps) {
     }
 
     async function post(pr: PullRequest, command: Command): Promise<boolean> {
+      const commentsBefore = rowOf(pr).fetched?.comments ?? [];
       update(pr, { activity: { posting: command } });
       try {
         const url = await gitHub.postCommand(pr, command);
-        if (REVIEW_COMMANDS.includes(command)) lastPostedAt.set(keyOf(pr), Date.now());
+        if (REVIEW_COMMANDS.includes(command)) lastPosts.set(keyOf(pr), { at: Date.now(), before: commentsBefore });
         update(pr, { activity: undefined, posted: { command, url } });
       } catch (error) {
         update(pr, { activity: undefined, error: message(error) });
         return false;
       }
-      const reply = await waitForReply(pr);
-      if (reply?.kind === "wait") orgBlockedUntil = reply.availableAt.getTime();
+      // The reply of CodeRabbit lands in the comments. The next redecide() applies it to every row.
+      await waitForReply(pr);
       return true;
     }
 
@@ -216,17 +237,21 @@ export function App(props: AppProps) {
         }),
     };
 
+    // A request of this session with no reply from CodeRabbit yet blocks a new one on the same pull request.
+    // A reply, such as a refusal, ends the block: a later signal can then free the quota again.
+    function unanswered(row: Row, last: { at: number; before: Comment[] } | undefined): boolean {
+      if (!last || Date.now() - last.at >= REPOST_GUARD_MS) return false;
+      return !botReplied(last.before, row.fetched?.comments ?? []);
+    }
+
     async function triggerReady(prs: PullRequest[]) {
       if (options.dryRun) return;
       for (const pr of prs) {
         await exclusive(async () => {
           const row = rowOf(pr);
-          if (row.left || row.decision?.kind !== "trigger") return;
-          if (Date.now() < orgBlockedUntil) {
-            update(pr, { decision: { kind: "wait", availableAt: new Date(orgBlockedUntil), delayGuessed: false } });
-            return;
-          }
-          if (Date.now() - (lastPostedAt.get(keyOf(pr)) ?? 0) < REPOST_GUARD_MS) return;
+          // A row whose last fetch failed shows old data: its head and its status are not checked.
+          if (row.left || row.error || row.decision?.kind !== "trigger") return;
+          if (unanswered(row, lastPosts.get(keyOf(pr)))) return;
           if (await post(pr, "review")) setTriggered((count) => count + 1);
         });
       }
@@ -689,7 +714,7 @@ function describe(row: Row, now: Date, options: Options): View {
         icon: <Text color="yellow">◷</Text>,
         label: "quota",
         color: "yellow",
-        detail: `quota back ${when} (at ${formatTime(decision.availableAt)})${guess}`,
+        detail: `quota back ${when} (at ${formatTime(decision.availableAt)})${guess}${sourceNote(decision.source, options)}`,
       };
     }
     case "pending":
@@ -705,7 +730,7 @@ function describe(row: Row, now: Date, options: Options): View {
         icon: <Text color="blue">↻</Text>,
         label: "to retry",
         color: "blue",
-        detail: `quota back for ${since}${options.dryRun ? " · dry run, nothing posted" : ""}`,
+        detail: `quota back for ${since}${sourceNote(decision.source, options)}${options.dryRun ? " · dry run, nothing posted" : ""}`,
       };
     }
   }
@@ -889,6 +914,12 @@ function Controls({ confirmation, flash, registerButton, disabledCommands, hideL
       )}
     </Box>
   );
+}
+
+function sourceNote(source: QuotaSource | undefined, options: Options): string {
+  if (!source) return "";
+  const name = source.pr.startsWith(`${options.org}/`) ? source.pr.slice(options.org.length + 1) : source.pr;
+  return ` · read on ${name} at ${formatTime(source.at)}`;
 }
 
 function formatDuration(ms: number, precise: boolean): string {

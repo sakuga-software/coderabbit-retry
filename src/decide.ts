@@ -3,8 +3,11 @@ export const REQUEST_BODY = "@coderabbitai review";
 
 const UNREADABLE_DELAY_MS = 60 * 60_000;
 const REQUEST_TIMEOUT_MS = 15 * 60_000;
+// CodeRabbit rounds its delays ("13 minutes", "1 minute"). A request at the exact time can come early and be refused.
+const QUOTA_MARGIN_MS = 30_000;
 
 export interface Comment {
+  id?: number;
   user: { login: string } | null;
   body: string;
   created_at: string;
@@ -16,6 +19,7 @@ export interface Review {
   commit_id: string;
   submitted_at: string;
   state?: string;
+  body?: string;
 }
 
 export type Verdict = "approved" | "changes requested" | "commented";
@@ -24,18 +28,33 @@ export type Decision =
   | { kind: "reviewed"; verdict: Verdict }
   | { kind: "busy" }
   | { kind: "idle"; limitLifted: boolean }
-  | { kind: "wait"; availableAt: Date; delayGuessed: boolean }
+  | { kind: "wait"; availableAt: Date; delayGuessed: boolean; source?: QuotaSource }
   | { kind: "pending"; requestedAt: Date }
-  | { kind: "trigger"; availableAt: Date }
+  | { kind: "trigger"; availableAt: Date; source?: QuotaSource }
   | { kind: "skipped"; reason: string }
   | { kind: "paused" }
   | { kind: "unseen" };
+
+/** Another pull request whose CodeRabbit comment gave the quota estimate. */
+export interface QuotaSource {
+  pr: string;
+  at: Date;
+}
+
+export type QuotaSignal =
+  | { kind: "limit"; pr: string; at: number; availableAt: number }
+  | { kind: "refusal"; pr: string; at: number }
+  | { kind: "free"; pr: string; at: number };
 
 export interface PullRequestState {
   head: string;
   reviews: Review[];
   comments: Comment[];
   now: Date;
+  /** The key of this pull request, to tell its own quota signals from the others. */
+  pr?: string;
+  /** The quota signals of every pull request of the developer, this one included. */
+  quota?: QuotaSignal[];
 }
 
 const UNIT_MS: Record<string, number> = { hour: 3_600_000, minute: 60_000, second: 1_000 };
@@ -90,6 +109,9 @@ export function reviewVerdict(botReviews: Review[]): Verdict {
 }
 
 const isBot = (item: { user: { login: string } | null }) => item.user?.login === BOT_LOGIN;
+// CodeRabbit answers in a review thread with a COMMENTED review that has an empty body. It is not a review.
+const isThreadReply = (review: Review) => review.state === "COMMENTED" && review.body === "";
+const botReviewsOf = (reviews: Review[]) => reviews.filter((review) => isBot(review) && !isThreadReply(review));
 const isRateLimit = (comment: Comment) =>
   /rate limited by coderabbit\.ai|Review rate limited/.test(comment.body);
 const isTriggerReply = (comment: Comment) =>
@@ -97,9 +119,88 @@ const isTriggerReply = (comment: Comment) =>
 const isBareRequest = (comment: Comment) =>
   /^\s*@coderabbitai\s+(full\s+)?review\s*$/.test(comment.body);
 const time = (iso: string) => Date.parse(iso);
+const isSummary = (comment: Comment) => comment.body.includes("summarize by coderabbit.ai");
+const REMAINING = /(\d+) remains? after this review/;
+const NOT_SETTLED = /rate limited by coderabbit\.ai|review in progress by coderabbit\.ai|review paused by coderabbit\.ai/;
 
-export function decide({ head, reviews, comments, now }: PullRequestState): Decision {
-  const botReviews = reviews.filter(isBot);
+/**
+ * Reads the quota signals in the CodeRabbit comments of one pull request:
+ * - a rate limit notice with a delay gives the time when the quota comes back;
+ * - a rate limit notice with no delay, such as a refused command, gives only the time of the refusal;
+ * - "N remain after this review" on a settled summary tells that the quota was free.
+ * The quota belongs to the developer, so the signals of all their pull requests read one clock.
+ */
+export function quotaSignals(pr: string, comments: Comment[], reviews: Review[]): QuotaSignal[] {
+  const botComments = comments.filter(isBot);
+  const signals: QuotaSignal[] = botComments.filter(isRateLimit).map((comment) => {
+    const at = time(comment.updated_at);
+    const delay = parseDelay(comment.body);
+    return delay === null ? { kind: "refusal", pr, at } : { kind: "limit", pr, at, availableAt: at + delay + QUOTA_MARGIN_MS };
+  });
+  const summary = botComments.findLast(isSummary);
+  const remaining = summary && !NOT_SETTLED.test(summary.body) ? REMAINING.exec(summary.body) : null;
+  if (summary && remaining) {
+    // A later edit moves the updated_at of the summary but can keep this line.
+    // The review date, or else the creation of the summary, is earlier, thus safe.
+    const lastReview = botReviewsOf(reviews).at(-1);
+    const at = lastReview ? time(lastReview.submitted_at) : time(summary.created_at);
+    signals.push(Number(remaining[1]) > 0 ? { kind: "free", pr, at } : { kind: "refusal", pr, at });
+  }
+  return signals;
+}
+
+/**
+ * Returns the scope of the quota clock of a pull request. The quota belongs to the developer, and
+ * the Open source plan of CodeRabbit also scopes it per repository. The plan comes from the
+ * "Plan:" line of the last CodeRabbit comment or review that has one.
+ */
+export function quotaScope(repo: string, comments: Comment[], reviews: Review[]): string {
+  const dated = [
+    ...comments.filter(isBot).map((comment) => ({ at: time(comment.updated_at), body: comment.body })),
+    ...reviews.filter(isBot).map((review) => ({ at: time(review.submitted_at), body: review.body ?? "" })),
+  ].toSorted((a, b) => a.at - b.at);
+  const plan = dated.map(({ body }) => /\*\*Plan\*\*:\s*([^\n*]+)/.exec(body)?.[1]?.trim()).findLast(Boolean);
+  return plan && /^open source$/i.test(plan) ? repo : "developer";
+}
+
+/**
+ * Tells if CodeRabbit added or edited a comment between two reads of the same pull request.
+ * It compares the comments, not their times: GitHub gives seconds, so a reply in the same second
+ * as a request can carry an earlier timestamp.
+ */
+export function botReplied(before: Comment[], after: Comment[]): boolean {
+  const keyOf = (comment: Comment) => String(comment.id ?? comment.created_at);
+  const known = new Map(before.filter(isBot).map((comment) => [keyOf(comment), comment]));
+  return after.filter(isBot).some((comment) => {
+    const old = known.get(keyOf(comment));
+    return !old || old.updated_at !== comment.updated_at || old.body !== comment.body;
+  });
+}
+
+type QuotaEstimate =
+  | { free: true; availableAt: number; source: QuotaSignal }
+  | { free: false; availableAt: number; guessed: boolean; source?: QuotaSignal };
+
+/**
+ * Estimates when the quota comes back for a pull request that CodeRabbit refused at limitAt.
+ * A free signal after the last refusal or notice means that the quota is back. Otherwise the newest notice with a delay
+ * gives the time, unless a refusal came after that time: then the tool falls back to a guess.
+ */
+function estimateQuota(limitAt: number, signals: QuotaSignal[]): QuotaEstimate {
+  const byTime = signals.toSorted((a, b) => a.at - b.at);
+  const lastExhaustion = Math.max(limitAt, ...byTime.filter((signal) => signal.kind !== "free").map((signal) => signal.at));
+  const free = byTime.findLast((signal) => signal.kind === "free" && signal.at > lastExhaustion);
+  if (free) return { free: true, availableAt: free.at, source: free };
+  const notice = byTime.findLast((signal) => signal.kind === "limit");
+  const lastRefusal = Math.max(limitAt, ...byTime.filter((signal) => signal.kind === "refusal").map((signal) => signal.at));
+  if (notice?.kind === "limit" && lastRefusal <= notice.availableAt) {
+    return { free: false, availableAt: notice.availableAt, guessed: false, source: notice };
+  }
+  return { free: false, availableAt: lastRefusal + UNREADABLE_DELAY_MS, guessed: true };
+}
+
+export function decide({ head, reviews, comments, now, pr = "this", quota }: PullRequestState): Decision {
+  const botReviews = botReviewsOf(reviews);
   const botComments = comments.filter(isBot);
 
   const reviewed = { kind: "reviewed", verdict: reviewVerdict(botReviews) } as const;
@@ -112,7 +213,7 @@ export function decide({ head, reviews, comments, now }: PullRequestState): Deci
 
   if (summary && coveredCommit(summary.body) === head) return reviewed;
 
-  const limited = rateLimitDecision(comments, botComments, botReviews, now);
+  const limited = rateLimitDecision(comments, botComments, botReviews, now, pr, quota ?? quotaSignals(pr, comments, reviews));
   if (limited) return limited;
 
   if (botComments.length === 0 && botReviews.length === 0) return { kind: "unseen" };
@@ -122,7 +223,14 @@ export function decide({ head, reviews, comments, now }: PullRequestState): Deci
   return { kind: "idle", limitLifted: botComments.some(isRateLimit) };
 }
 
-function rateLimitDecision(comments: Comment[], botComments: Comment[], botReviews: Review[], now: Date): Decision | null {
+function rateLimitDecision(
+  comments: Comment[],
+  botComments: Comment[],
+  botReviews: Review[],
+  now: Date,
+  pr: string,
+  quota: QuotaSignal[],
+): Decision | null {
   const limit = botComments
     .filter(isRateLimit)
     .toSorted((a, b) => time(a.updated_at) - time(b.updated_at))
@@ -135,9 +243,10 @@ function rateLimitDecision(comments: Comment[], botComments: Comment[], botRevie
     botComments.some((comment) => isTriggerReply(comment) && time(comment.created_at) > limitTime);
   if (liftedLater) return null;
 
-  const delay = parseDelay(limit.body);
-  const availableAt = new Date(limitTime + (delay ?? UNREADABLE_DELAY_MS));
-  if (now < availableAt) return { kind: "wait", availableAt, delayGuessed: delay === null };
+  const estimate = estimateQuota(limitTime, quota);
+  const availableAt = new Date(estimate.availableAt);
+  const source = estimate.source && estimate.source.pr !== pr ? { pr: estimate.source.pr, at: new Date(estimate.source.at) } : undefined;
+  if (!estimate.free && now < availableAt) return { kind: "wait", availableAt, delayGuessed: estimate.guessed, ...(source && { source }) };
 
   const request = comments
     .filter((comment) => !isBot(comment) && isBareRequest(comment) && time(comment.created_at) > limitTime)
@@ -150,5 +259,5 @@ function rateLimitDecision(comments: Comment[], botComments: Comment[], botRevie
     }
   }
 
-  return { kind: "trigger", availableAt };
+  return { kind: "trigger", availableAt, ...(source && { source }) };
 }

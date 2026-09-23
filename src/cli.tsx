@@ -43,10 +43,15 @@ const cli = meow(
   review of it in the CodeRabbit summary. The verdict is the last CodeRabbit
   review that approves, requests changes or is dismissed, as on GitHub.
 
-  The delay comes from the current version of the CodeRabbit comment: its
-  "available in …" starts at its last edit. The quota is shared by the whole
-  organization, so the tool posts one request at a time, after the reply to
-  the previous one.
+  The quota belongs to the developer, so the tool reads one clock from all the
+  listed pull requests (per repository on the CodeRabbit Open source plan).
+  The time comes from the newest notice with a delay ("available in …",
+  counted from the last edit of that comment, plus 30 s because CodeRabbit
+  rounds its delays), on this pull request or on another one. A refused
+  command with no delay only dates the refusal. "N remain after this review"
+  on a later review means the quota is back. If a refusal came after the time
+  that the newest notice gave, the tool assumes 1 hour. It posts one request
+  at a time, after the reply to the previous one.
 
   With --watch, the tool searches the pull requests again once a minute. It
   adds the new ones, shows the ones that are merged, closed or back to draft,

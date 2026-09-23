@@ -4,7 +4,7 @@ Posts `@coderabbitai review` on your open pull requests after their CodeRabbit q
 
 ![coderabbit-retry --watch on simulated data](docs/demo.gif)
 
-When the review quota of an organization is used up, CodeRabbit posts "Review limit reached"
+When your CodeRabbit review quota is used up, CodeRabbit posts "Review limit reached"
 with a delay instead of a review. This tool reads each pull request, calculates when the
 quota comes back, and posts the command after that time.
 
@@ -48,9 +48,22 @@ coderabbit-retry --help          # options and states
   If the comment has more text, CodeRabbit replies as a chat and starts no review.
 - If a request has no reply after 15 min, it no longer blocks a retry.
 - A review or a "Review triggered" reply after a rate limit lifts that rate limit.
-- If the delay is unreadable, the tool assumes 1 hour.
-- The quota is shared by the whole organization. The tool posts one request at a time,
-  after the reply to the previous one. A new rate limit puts the other pull requests on hold.
+- The quota belongs to the developer (the pull request author), on a rolling window. On the
+  CodeRabbit "Open source" plan, it is also scoped per repository: the tool reads the "Plan:" line
+  of the CodeRabbit comments and keeps such a repository on its own clock. The tool reads one
+  quota clock from the CodeRabbit comments of all the listed pull requests in the same scope:
+  - a notice with a delay ("Next included review available in …", in the first CodeRabbit
+    comment, which CodeRabbit edits at each rate limit) gives the time when the quota comes back.
+    The tool adds 30 s: CodeRabbit rounds its delays, and a request 4 s after the time can be refused;
+  - a refused command with no delay ("Review rate limited.") only dates the refusal;
+  - "N remain after this review" on a settled summary, after the refusal, means the quota is back.
+    The tool dates it by the review, because a later edit of the summary can keep the line.
+- When the time comes from another pull request, the row says so ("read on web#517 at 17:19").
+- If a refusal came after the time that the newest notice gave, the tool assumes 1 hour.
+- The tool only sees the pull requests that it lists. A review on a pull request outside the list
+  spends the same quota, and the tool does not see it.
+- The tool posts one request at a time, after the reply to the previous one. A new rate limit
+  puts the other pull requests on hold.
 - With `--watch`, the tool searches the pull requests again once a minute. It adds the new
   ones, and shows the ones that are merged, closed or back to draft. It never posts on those.
   A draft that is ready for review again comes back into the watch.
