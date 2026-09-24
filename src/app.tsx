@@ -462,15 +462,15 @@ function mergeWarning(row: Row): string | undefined {
       merging.current.add(pending.key);
       setFlash({ text: `Merging ${pending.key}…`, color: "blue" });
       gitHub.mergePullRequest(row.pr, head).then(
-        async (method) => {
+        async () => {
           // With a merge queue or auto-merge, gh succeeds but the pull request stays open for a while.
+          // A queue can also use another method than the one requested, so the messages name none.
           await controls.current?.refresh(row.pr);
-          const merged = rowsRef.current.get(pending.key)?.left === "merged";
-          setFlash(
-            merged
-              ? { text: `Merged ${pending.key} (${method}).`, color: "green" }
-              : { text: `Merge of ${pending.key} requested (${method}): GitHub queued it or enabled auto-merge.`, color: "blue" },
-          );
+          const after = rowsRef.current.get(pending.key);
+          if (after?.left === "merged") setFlash({ text: `Merged ${pending.key}.`, color: "green" });
+          else if (after?.error) {
+            setFlash({ text: `GitHub accepted the merge of ${pending.key}, but its new status could not be read: ${after.error}`, color: "yellow" });
+          } else setFlash({ text: `Merge of ${pending.key} requested: GitHub queued it or enabled auto-merge.`, color: "blue" });
         },
         (error) => setFlash({ text: `Could not merge ${pending.key}: ${message(error)}`, color: "red" }),
       ).finally(() => merging.current.delete(pending.key));

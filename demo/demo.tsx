@@ -108,7 +108,6 @@ const fakeGitHub: GitHub = {
   async mergePullRequest(target) {
     await sleep(900);
     mergedByHand.add(target.number);
-    return "squash";
   },
 };
 
