@@ -26,10 +26,10 @@ interface Row {
   posted?: { command: Command; url: string };
   error?: string;
   left?: LeftStatus;
-  fetched?: { head: string; reviews: Review[]; comments: Comment[] };
+  fetched?: { head: string; mergeState?: string; reviews: Review[]; comments: Comment[] };
 }
 
-export type GitHub = Pick<typeof github, "listPullRequests" | "fetchReviewState" | "postCommand" | "openInBrowser">;
+export type GitHub = Pick<typeof github, "listPullRequests" | "fetchReviewState" | "postCommand" | "openInBrowser" | "mergePullRequest">;
 
 export interface Timing {
   replyPollMs: number;
@@ -42,6 +42,14 @@ const DEFAULT_TIMING: Timing = { replyPollMs: 5_000, replyTimeoutMs: 90_000, wat
 const REPOST_GUARD_MS = 15 * 60_000;
 const BRAND = "#FF570A";
 const REVIEW_COMMANDS: readonly Command[] = ["review", "full review"];
+// GitHub mergeable_state values that deserve a warning before a merge.
+const MERGE_STATE_WARNINGS: Record<string, string> = {
+  dirty: "conflicts with the base branch",
+  blocked: "blocked by the branch protection rules",
+  unstable: "some checks fail",
+  behind: "behind the base branch",
+  unknown: "GitHub has not computed the merge state yet",
+};
 // Lines outside the list in interactive mode: the header, the margin, the scroll hints and the footer.
 const CHROME_LINES = 11;
 
@@ -90,6 +98,7 @@ interface Confirmation {
 
 interface PostControls {
   post(pr: PullRequest, command: Command): Promise<void>;
+  refresh(pr: PullRequest): Promise<unknown>;
 }
 
 interface AppProps {
@@ -123,6 +132,7 @@ export function App(props: AppProps) {
   const [hideLeft, setHideLeft] = useState(false);
   const hideLeftRef = useRef(false);
   const pendingEscape = useRef<NodeJS.Timeout>(undefined);
+  const lastSplitMouse = useRef(0);
   const selectedRef = useRef<string>(undefined);
   const confirmationRef = useRef<Confirmation>(undefined);
   const rowsRef = useRef(new Map<string, Row>());
@@ -219,6 +229,7 @@ export function App(props: AppProps) {
     }
 
     controls.current = {
+      refresh,
       post: (pr, command) =>
         exclusive(async () => {
           // The post can wait in the queue for minutes. The pull request can close in that time.
@@ -381,12 +392,27 @@ export function App(props: AppProps) {
     );
   }
 
+function mergeWarning(row: Row): string | undefined {
+    const warnings: string[] = [];
+    const decision = row.decision;
+    if (decision?.kind === "reviewed" && decision.verdict === "changes requested") warnings.push("CodeRabbit requests changes");
+    else if (decision?.kind !== "reviewed" || decision.verdict !== "approved") warnings.push("CodeRabbit has not approved the last commit");
+    const state = MERGE_STATE_WARNINGS[row.fetched?.mergeState ?? "unknown"];
+    if (state) warnings.push(state);
+    return warnings.length > 0 ? `Warning: ${warnings.join(", ")}.` : undefined;
+  }
+
   function request(action: Action, key = live().key) {
     const row = key ? rowsRef.current.get(key) : undefined;
     if (!row || !key) return;
     const refused = refusal(action, { left: row.left !== undefined, dryRun: options.dryRun });
     if (refused) {
       setFlash({ text: `Cannot ${action.label} ${key}: ${refused}.`, color: "yellow" });
+      return;
+    }
+    if (action.merge) {
+      setFlash(undefined);
+      confirm({ key, action, warning: mergeWarning(row) });
       return;
     }
     if (!action.command) {
@@ -407,7 +433,7 @@ export function App(props: AppProps) {
   function answer(yes: boolean) {
     const pending = confirmationRef.current;
     confirm(undefined);
-    if (!pending?.action.command) return;
+    if (!pending?.action.command && !pending?.action.merge) return;
     const row = rowsRef.current.get(pending.key);
     if (!yes || !row) {
       setFlash({ text: "Cancelled.", color: "gray" });
@@ -419,8 +445,19 @@ export function App(props: AppProps) {
       setFlash({ text: `Cannot ${pending.action.label} ${pending.key}: ${refused}.`, color: "yellow" });
       return;
     }
-    setFlash({ text: `Posting "${commandBody(pending.action.command)}" on ${pending.key}…`, color: "blue" });
-    void controls.current?.post(row.pr, pending.action.command);
+    if (pending.action.merge) {
+      setFlash({ text: `Merging ${pending.key}…`, color: "blue" });
+      gitHub.mergePullRequest(row.pr).then(
+        (method) => {
+          setFlash({ text: `Merged ${pending.key} (${method}).`, color: "green" });
+          void controls.current?.refresh(row.pr);
+        },
+        (error) => setFlash({ text: `Could not merge ${pending.key}: ${message(error)}`, color: "red" }),
+      );
+      return;
+    }
+    setFlash({ text: `Posting "${commandBody(pending.action.command!)}" on ${pending.key}…`, color: "blue" });
+    void controls.current?.post(row.pr, pending.action.command!);
   }
 
   function press(id: string) {
@@ -446,7 +483,14 @@ export function App(props: AppProps) {
     else if (char === "j") move(1);
     else if (char === "\r") press("o");
     else if (char === "q") exit();
-    else press(char);
+    else if (char === "m") {
+      // A mouse report split before its last byte reaches useInput as a lone "m". Wait for the
+      // parser to say whether it was the end of such a report.
+      const typedAt = Date.now();
+      setTimeout(() => {
+        if (Math.abs(lastSplitMouse.current - typedAt) > 100) press("m");
+      }, 50);
+    } else press(char);
   }
 
   useInput(
@@ -500,7 +544,7 @@ export function App(props: AppProps) {
     const onData = (data: Buffer | string) => {
       const text = data.toString();
       if (text.startsWith("[<")) clearTimeout(pendingEscape.current);
-      feed(text);
+      if (feed(text)) lastSplitMouse.current = Date.now();
     };
     stdin.on("data", onData);
     return () => {
@@ -876,8 +920,16 @@ function Controls({ confirmation, flash, registerButton, disabledCommands, hideL
         <>
           <Box>
             <Text wrap="truncate-end">
-              Post <Text bold>"{commandBody(confirmation.action.command!)}"</Text> on{" "}
-              <Text bold>{confirmation.key}</Text>?{"  "}
+              {confirmation.action.merge ? (
+                <>
+                  Merge <Text bold>{confirmation.key}</Text>?{"  "}
+                </>
+              ) : (
+                <>
+                  Post <Text bold>"{commandBody(confirmation.action.command!)}"</Text> on{" "}
+                  <Text bold>{confirmation.key}</Text>?{"  "}
+                </>
+              )}
             </Text>
             <Button id="yes" hotkey="y / ⏎" label="yes" register={registerButton} />
             <Button id="no" hotkey="n / esc" label="no" register={registerButton} />

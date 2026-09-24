@@ -4,6 +4,8 @@ export interface Action {
   key: string;
   label: string;
   command?: Command;
+  /** The action merges the pull request. It always asks for a confirmation. */
+  merge?: true;
 }
 
 export const ACTIONS: readonly Action[] = [
@@ -12,6 +14,7 @@ export const ACTIONS: readonly Action[] = [
   { key: "f", label: "full review", command: "full review" },
   { key: "a", label: "approve", command: "approve" },
   { key: "s", label: "resolve", command: "resolve" },
+  { key: "m", label: "merge", merge: true },
 ];
 
 export const commandBody = (command: Command) => `@coderabbitai ${command}`;
@@ -25,9 +28,9 @@ export interface Target {
 
 /** Returns why the action is not available on the target, or null if it is available. */
 export function refusal(action: Action, target: Target): string | null {
-  if (!action.command) return null;
+  if (!action.command && !action.merge) return null;
   if (target.left) return "this pull request is no longer open";
-  if (target.dryRun) return "dry run: the tool posts nothing";
+  if (target.dryRun) return action.merge ? "dry run: the tool merges nothing" : "dry run: the tool posts nothing";
   return null;
 }
 

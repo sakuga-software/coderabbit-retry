@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ACTIONS, actionForKey, commandBody, moveSelection, refusal, reselect } from "./actions.js";
 
-test("no action uses m, which ends a mouse report", () => {
-  assert.equal(ACTIONS.some((action) => action.key.toLowerCase() === "m"), false);
+test("only merge uses m, the last byte of a mouse report, and it always asks for a confirmation", () => {
+  const onM = ACTIONS.filter((action) => action.key.toLowerCase() === "m");
+  assert.deepEqual(onM.map((action) => action.label), ["merge"]);
+  assert.equal(onM[0]!.merge, true);
 });
 
 test("each key maps to one action", () => {
@@ -50,4 +52,11 @@ test("a hidden selection at the end goes to the previous visible row", () => {
 test("no visible row gives no selection", () => {
   assert.equal(reselect(["a"], [], "a"), undefined);
   assert.equal(reselect(["a", "b"], ["b"], undefined), "b");
+});
+
+test("merge is refused on a pull request that is no longer open, and in a dry run", () => {
+  const merge = actionForKey("m")!;
+  assert.match(refusal(merge, { left: true, dryRun: false })!, /no longer open/);
+  assert.match(refusal(merge, { left: false, dryRun: true })!, /dry run/);
+  assert.equal(refusal(merge, { left: false, dryRun: false }), null);
 });

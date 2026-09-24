@@ -36,3 +36,11 @@ test("isMouseFragment spots the pieces that Ink passes to useInput", () => {
   for (const piece of ["[<0;30;8M", "[<0;12", ";3M", "<0;1;1m"]) assert.equal(isMouseFragment(piece), true, piece);
   for (const key of ["r", "o", "q", "3", ""]) assert.equal(isMouseFragment(key), false, key);
 });
+
+test("the parser tells when a chunk completes a report that an earlier chunk started", () => {
+  const feed = createMouseParser(() => {});
+  assert.equal(feed("\u001B[<0;12;3"), false);
+  assert.equal(feed("m"), true);
+  assert.equal(feed("\u001B[<0;4;4M"), false);
+  assert.equal(feed("m"), false);
+});

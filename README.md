@@ -85,10 +85,15 @@ Piped or scheduled runs stay as they are.
 | `f` | post `@coderabbitai full review` |
 | `a` | post `@coderabbitai approve`: resolve the CodeRabbit threads, then approve |
 | `s` | post `@coderabbitai resolve`: resolve the CodeRabbit threads |
+| `m` | merge the pull request: squash if the repository allows it, else merge, else rebase |
 | `h` | hide or show the merged, closed and draft pull requests |
 | `q` | quit |
 
-Each post asks for a confirmation: `y` or `Enter` posts, `n` or `Esc` cancels. A post goes
+Each post and each merge asks for a confirmation: `y` or `Enter` confirms, `n` or `Esc` cancels.
+Before a merge, the confirmation warns if CodeRabbit has not approved the last commit, or if
+GitHub reports a conflict, failing checks, a protection rule or a branch behind its base. You can
+still merge: GitHub enforces the protection rules anyway. The repository settings decide if GitHub
+deletes the branch. A post goes
 through the same queue as the automatic retries: one post at a time, with about 90 s of polling
 for the reply to each one. A click selects a row or presses a button of the bar. The mouse mode takes over
 text selection: hold Shift or Option, depending on the terminal, to select text. A merged or
