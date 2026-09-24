@@ -66,11 +66,15 @@ const cli = meow(
     f               post "@coderabbitai full review"
     a               post "@coderabbitai approve": resolve the threads, then approve
     s               post "@coderabbitai resolve": resolve the threads
+    m               merge the pull request (squash, else merge, else rebase)
     h               hide or show the merged, closed and draft pull requests
     q               quit
-  Each post asks for a confirmation: y or Enter posts, n or Esc cancels. A
-  click selects a row or presses a button. The mouse mode takes over text
-  selection: hold Shift or Option, depending on the terminal, to select text.
+  Each post and each merge asks for a confirmation: y or Enter confirms, n or
+  Esc cancels. Before a merge, the confirmation warns if CodeRabbit has not
+  approved the last commit, or if GitHub reports a conflict, failing checks or
+  a protection rule. A click selects a row or presses a button. The mouse mode
+  takes over text selection: hold Shift or Option, depending on the terminal,
+  to select text.
 
   Examples
     $ coderabbit-retry

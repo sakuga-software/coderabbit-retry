@@ -53,7 +53,10 @@ let requestedAt: number | undefined;
 
 type ReviewState = { head: string; reviews: Review[]; comments: Comment[] };
 
+const mergedByHand = new Set<number>();
+
 function status(target: PullRequest): PullRequestStatus {
+  if (mergedByHand.has(target.number)) return "merged";
   return target.number === 910 && elapsed() >= CHANGE_AT ? "merged" : "open";
 }
 
@@ -67,9 +70,9 @@ function state(target: PullRequest): ReviewState {
     case 912:
       return { head: "b1", reviews: [review("b1", -600_000, "CHANGES_REQUESTED")], comments: [] };
     case 911: {
-      if (requestedAt === undefined) return { head: "c1", reviews: [], comments: [rateLimited(-40_000, "50 seconds")] };
+      if (requestedAt === undefined) return { head: "c1", reviews: [], comments: [rateLimited(-70_000, "50 seconds")] };
       const request = comment("octocat", REQUEST_BODY, requestedAt);
-      if (t < requestedAt + 2_500) return { head: "c1", reviews: [], comments: [rateLimited(-40_000, "50 seconds"), request] };
+      if (t < requestedAt + 2_500) return { head: "c1", reviews: [], comments: [rateLimited(-70_000, "50 seconds"), request] };
       if (t < requestedAt + 6_000) {
         const triggered = comment(BOT_LOGIN, "Action performed: Review triggered.", requestedAt + 2_000);
         return { head: "c1", reviews: [], comments: [inProgress(requestedAt + 2_000), request, triggered] };
@@ -94,7 +97,7 @@ const fakeGitHub: GitHub = {
   },
   async fetchReviewState(target) {
     await sleep(300 + Math.random() * 700);
-    return { ...state(target), status: status(target) };
+    return { ...state(target), status: status(target), mergeState: target.number === 912 ? "blocked" : "clean" };
   },
   async postCommand(target, command) {
     await sleep(900);
@@ -102,6 +105,10 @@ const fakeGitHub: GitHub = {
     return `${target.url}#issuecomment-${1234567890 + target.number}`;
   },
   async openInBrowser() {},
+  async mergePullRequest(target) {
+    await sleep(900);
+    mergedByHand.add(target.number);
+  },
 };
 
 const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
