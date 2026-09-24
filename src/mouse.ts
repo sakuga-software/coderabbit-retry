@@ -7,6 +7,8 @@ export type MouseEvent =
 
 const SEQUENCE = /\u001B\[<(\d+);(\d+);(\d+)([Mm])/g;
 const INCOMPLETE_TAIL = /\u001B(\[(<[\d;]*)?)?$/;
+// A terminal sends the rest of a split report within milliseconds. An older prefix is abandoned.
+const PENDING_EXPIRY_MS = 100;
 
 /**
  * Decodes SGR mouse reports (mode 1006) from raw terminal input.
@@ -15,9 +17,11 @@ const INCOMPLETE_TAIL = /\u001B(\[(<[\d;]*)?)?$/;
  * The returned function tells if the chunk completed a report that an earlier chunk started.
  * Ink then passes the end of that report, for example "m", to useInput as if it were a key.
  */
-export function createMouseParser(onEvent: (event: MouseEvent) => void) {
+export function createMouseParser(onEvent: (event: MouseEvent) => void, now: () => number = Date.now) {
   let pending = "";
+  let pendingAt = 0;
   return (chunk: string): boolean => {
+    if (pending && now() - pendingAt > PENDING_EXPIRY_MS) pending = "";
     const carried = pending.length;
     const data = pending + chunk;
     let end = 0;
@@ -34,6 +38,7 @@ export function createMouseParser(onEvent: (event: MouseEvent) => void) {
     }
     const rest = data.slice(end);
     pending = INCOMPLETE_TAIL.exec(rest)?.[0] ?? "";
+    pendingAt = now();
     return completedCarried;
   };
 }

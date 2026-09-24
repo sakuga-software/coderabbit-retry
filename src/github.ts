@@ -96,14 +96,16 @@ export type MergeMethod = "squash" | "merge" | "rebase";
 /**
  * Merges the pull request with the first method that the repository allows: squash, merge, then rebase.
  * The repository settings decide if GitHub deletes the branch.
+ * With a head commit, GitHub refuses the merge if the pull request has a newer head.
  */
-export async function mergePullRequest(pr: PullRequest): Promise<MergeMethod> {
+export async function mergePullRequest(pr: PullRequest, head?: string): Promise<MergeMethod> {
   const allowed = JSON.parse(
     await gh(["api", `repos/${pr.repo}`, "--jq", "{squash: .allow_squash_merge, merge: .allow_merge_commit, rebase: .allow_rebase_merge}"]),
   ) as Record<MergeMethod, boolean>;
   const method = (["squash", "merge", "rebase"] as const).find((candidate) => allowed[candidate]);
   if (!method) throw new Error(`${pr.repo} allows no merge method`);
-  await gh(["pr", "merge", String(pr.number), "--repo", pr.repo, `--${method}`]);
+  const matchHead = head ? ["--match-head-commit", head] : [];
+  await gh(["pr", "merge", String(pr.number), "--repo", pr.repo, `--${method}`, ...matchHead]);
   return method;
 }
 

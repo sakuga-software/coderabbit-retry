@@ -94,6 +94,8 @@ interface Confirmation {
   key: string;
   action: Action;
   warning?: string;
+  /** The head commit that the warnings describe. A merge fails if the head changes after it. */
+  head?: string;
 }
 
 interface PostControls {
@@ -412,7 +414,7 @@ function mergeWarning(row: Row): string | undefined {
     }
     if (action.merge) {
       setFlash(undefined);
-      confirm({ key, action, warning: mergeWarning(row) });
+      confirm({ key, action, warning: mergeWarning(row), head: row.fetched?.head });
       return;
     }
     if (!action.command) {
@@ -447,10 +449,16 @@ function mergeWarning(row: Row): string | undefined {
     }
     if (pending.action.merge) {
       setFlash({ text: `Merging ${pending.key}…`, color: "blue" });
-      gitHub.mergePullRequest(row.pr).then(
-        (method) => {
-          setFlash({ text: `Merged ${pending.key} (${method}).`, color: "green" });
-          void controls.current?.refresh(row.pr);
+      gitHub.mergePullRequest(row.pr, pending.head).then(
+        async (method) => {
+          // With a merge queue or auto-merge, gh succeeds but the pull request stays open for a while.
+          await controls.current?.refresh(row.pr);
+          const merged = rowsRef.current.get(pending.key)?.left === "merged";
+          setFlash(
+            merged
+              ? { text: `Merged ${pending.key} (${method}).`, color: "green" }
+              : { text: `Merge of ${pending.key} requested (${method}): GitHub queued it or enabled auto-merge.`, color: "blue" },
+          );
         },
         (error) => setFlash({ text: `Could not merge ${pending.key}: ${message(error)}`, color: "red" }),
       );
@@ -487,8 +495,12 @@ function mergeWarning(row: Row): string | undefined {
       // A mouse report split before its last byte reaches useInput as a lone "m". Wait for the
       // parser to say whether it was the end of such a report.
       const typedAt = Date.now();
+      const target = live().key;
       setTimeout(() => {
-        if (Math.abs(lastSplitMouse.current - typedAt) > 100) press("m");
+        if (Math.abs(lastSplitMouse.current - typedAt) <= 100) return;
+        // Another key in the 50 ms can open a prompt or move the selection. The merge was for the old target.
+        if (confirmationRef.current || live().key !== target) return;
+        request(actionForKey("m")!, target);
       }, 50);
     } else press(char);
   }

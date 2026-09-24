@@ -44,3 +44,21 @@ test("the parser tells when a chunk completes a report that an earlier chunk sta
   assert.equal(feed("\u001B[<0;4;4M"), false);
   assert.equal(feed("m"), false);
 });
+
+test("an unfinished report expires, so a later key does not complete it", () => {
+  let clock = 1_000;
+  const feed = createMouseParser(() => {}, () => clock);
+  assert.equal(feed("\u001B[<0;12;3"), false);
+  clock += 5_000;
+  assert.equal(feed("m"), false);
+});
+
+test("a report split within the expiry still completes", () => {
+  let clock = 1_000;
+  const events: unknown[] = [];
+  const feed = createMouseParser((event) => events.push(event), () => clock);
+  feed("\u001B[<0;12;3");
+  clock += 20;
+  assert.equal(feed("M"), true);
+  assert.deepEqual(events, [{ kind: "click", x: 11, y: 2 }]);
+});
