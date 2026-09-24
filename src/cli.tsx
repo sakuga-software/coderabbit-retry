@@ -55,8 +55,8 @@ const cli = meow(
 
   With --watch, the tool searches the pull requests again once a minute. It
   adds the new ones, shows the ones that are merged, closed or back to draft,
-  and checks the settled ones again, so a first review shows up when it starts
-  and when it ends.
+  and checks the settled and waiting ones again. A first review then shows up
+  when it starts and when it ends, and so does an approval during a quota wait.
 
   Keys and mouse
     With --watch in a terminal, the list takes keys and mouse clicks:

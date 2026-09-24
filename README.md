@@ -68,7 +68,8 @@ coderabbit-retry --help          # options and states
   ones, and shows the ones that are merged, closed or back to draft. It never posts on those.
   A draft that is ready for review again comes back into the watch.
 - With `--watch`, the settled rows (approved, changes requested, reviewed, nothing to do,
-  skipped, paused, no review yet) are checked again at each list refresh. A first review then
+  skipped, paused, no review yet) and the rows that wait for the quota are checked again at each
+  list refresh. A pull request approved during a quota wait thus shows as approved within a minute. A first review then
   shows up when it starts and when it ends, and so does a push that CodeRabbit has not reviewed
   yet.
 
