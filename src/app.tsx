@@ -134,7 +134,7 @@ export function App(props: AppProps) {
   const [hideLeft, setHideLeft] = useState(false);
   const hideLeftRef = useRef(false);
   const pendingEscape = useRef<NodeJS.Timeout>(undefined);
-  const lastSplitMouse = useRef(0);
+  const merging = useRef(new Set<string>());
   const selectedRef = useRef<string>(undefined);
   const confirmationRef = useRef<Confirmation>(undefined);
   const rowsRef = useRef(new Map<string, Row>());
@@ -413,8 +413,17 @@ function mergeWarning(row: Row): string | undefined {
       return;
     }
     if (action.merge) {
+      const head = row.fetched?.head;
+      if (!head) {
+        setFlash({ text: `Cannot merge ${key}: its state is not fetched yet.`, color: "yellow" });
+        return;
+      }
+      if (merging.current.has(key)) {
+        setFlash({ text: `${key} is already merging.`, color: "yellow" });
+        return;
+      }
       setFlash(undefined);
-      confirm({ key, action, warning: mergeWarning(row), head: row.fetched?.head });
+      confirm({ key, action, warning: mergeWarning(row), head });
       return;
     }
     if (!action.command) {
@@ -448,8 +457,11 @@ function mergeWarning(row: Row): string | undefined {
       return;
     }
     if (pending.action.merge) {
+      const head = pending.head;
+      if (!head || merging.current.has(pending.key)) return;
+      merging.current.add(pending.key);
       setFlash({ text: `Merging ${pending.key}…`, color: "blue" });
-      gitHub.mergePullRequest(row.pr, pending.head).then(
+      gitHub.mergePullRequest(row.pr, head).then(
         async (method) => {
           // With a merge queue or auto-merge, gh succeeds but the pull request stays open for a while.
           await controls.current?.refresh(row.pr);
@@ -461,7 +473,7 @@ function mergeWarning(row: Row): string | undefined {
           );
         },
         (error) => setFlash({ text: `Could not merge ${pending.key}: ${message(error)}`, color: "red" }),
-      );
+      ).finally(() => merging.current.delete(pending.key));
       return;
     }
     setFlash({ text: `Posting "${commandBody(pending.action.command!)}" on ${pending.key}…`, color: "blue" });
@@ -491,23 +503,14 @@ function mergeWarning(row: Row): string | undefined {
     else if (char === "j") move(1);
     else if (char === "\r") press("o");
     else if (char === "q") exit();
-    else if (char === "m") {
-      // A mouse report split before its last byte reaches useInput as a lone "m". Wait for the
-      // parser to say whether it was the end of such a report.
-      const typedAt = Date.now();
-      const target = live().key;
-      setTimeout(() => {
-        if (Math.abs(lastSplitMouse.current - typedAt) <= 100) return;
-        // Another key in the 50 ms can open a prompt or move the selection. The merge was for the old target.
-        if (confirmationRef.current || live().key !== target) return;
-        request(actionForKey("m")!, target);
-      }, 50);
-    } else press(char);
+    else press(char);
   }
 
   useInput(
     (input, key) => {
       if (isMouseFragment(input)) return;
+      // The raw stdin listener handles a lone "m": only the mouse parser knows if it ends a split report.
+      if (input === "m") return;
       if (key.upArrow) return confirmationRef.current ? undefined : move(-1);
       if (key.downArrow) return confirmationRef.current ? undefined : move(1);
       if (key.return) return typeKey("\r");
@@ -538,8 +541,8 @@ function mergeWarning(row: Row): string | undefined {
     return () => clearTimeout(timer);
   }, [flash]);
 
-  const handlers = useRef({ press, move, select });
-  handlers.current = { press, move, select };
+  const handlers = useRef({ press, move, select, typeKey });
+  handlers.current = { press, move, select, typeKey };
 
   useEffect(() => {
     if (!options.interactive) return;
@@ -556,7 +559,8 @@ function mergeWarning(row: Row): string | undefined {
     const onData = (data: Buffer | string) => {
       const text = data.toString();
       if (text.startsWith("[<")) clearTimeout(pendingEscape.current);
-      if (feed(text)) lastSplitMouse.current = Date.now();
+      const endedSplitReport = feed(text);
+      if (text === "m" && !endedSplitReport) handlers.current.typeKey("m");
     };
     stdin.on("data", onData);
     return () => {
