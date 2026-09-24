@@ -315,9 +315,13 @@ export function App(props: AppProps) {
           } catch (error) {
             setListError(message(error));
           }
-          // A settled row can change by itself: a first review starts or ends, or a push lands.
-          const settled = tracked().filter((pr) => !rowOf(pr).left && !needsWatch(rowOf(pr), options.dryRun));
-          await Promise.all(settled.map(refresh));
+          // A settled or waiting row can change by itself: a first review starts or ends, a push lands,
+          // or someone approves a pull request that waits for the quota. The loop below refreshes the others.
+          const quiet = tracked().filter((pr) => {
+            const row = rowOf(pr);
+            return !row.left && (!needsWatch(row, options.dryRun) || row.decision?.kind === "wait");
+          });
+          await Promise.all(quiet.map(refresh));
         }
 
         const due = watched.filter((pr) => {
